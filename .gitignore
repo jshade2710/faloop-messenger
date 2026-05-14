@@ -1,0 +1,23 @@
+# Build outputs
+**/bin/
+**/obj/
+*.dll
+*.pdb
+
+# IDE / tools
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# Claude Code workspace state
+.claude/
+
+# OS noise
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Logs
+*.log
