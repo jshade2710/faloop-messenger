@@ -1,0 +1,21 @@
+[
+  {
+    "Author": "Iam Batman",
+    "Name": "Faloop Messenger",
+    "InternalName": "FaloopMessenger",
+    "AssemblyVersion": "0.1.0.0",
+    "TestingAssemblyVersion": "0.1.0.0",
+    "Punchline": "Live S-rank hunt tracker from Faloop, with one-click teleport via Lifestream.",
+    "Description": "Connects to Faloop's real-time websocket feed and shows S-rank spawn cards with a zoomed map preview and route hints. Echoes new spawns to chat with a clickable map link, plays a sound, and lets you teleport to the closest aetheryte (cross-world, via Lifestream). Commands: /faloop (full tracker), /faloopmini (slim auto-popping window), /faloopcompact (high-density view).",
+    "ApplicableVersion": "any",
+    "Tags": ["hunt", "faloop", "srank", "lifestream", "tracker", "teleport"],
+    "CategoryTags": [],
+    "IsHide": false,
+    "IsTestingExclusive": false,
+    "RepoUrl": "https://github.com/jshade2710/faloop-messenger",
+    "DownloadLinkInstall": "https://github.com/jshade2710/faloop-messenger/releases/latest/download/latest.zip",
+    "DownloadLinkTesting": "https://github.com/jshade2710/faloop-messenger/releases/latest/download/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/jshade2710/faloop-messenger/releases/latest/download/latest.zip",
+    "DownloadCount": 0
+  }
+]

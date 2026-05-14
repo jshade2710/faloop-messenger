@@ -1,0 +1,105 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Plugin version (e.g. 0.1.0)'
+        required: true
+        default: '0.1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $version = $env:GITHUB_REF -replace 'refs/tags/v', ''
+          } else {
+            $version = '${{ github.event.inputs.version }}'
+          }
+          # Pad to 4 segments: 0.1.0 → 0.1.0.0
+          $parts = $version.Split('.')
+          while ($parts.Length -lt 4) { $parts += '0' }
+          $assemblyVersion = ($parts -join '.')
+          echo "version=$version"               >> $env:GITHUB_OUTPUT
+          echo "assembly=$assemblyVersion"      >> $env:GITHUB_OUTPUT
+          Write-Host "Building version $version  (assembly $assemblyVersion)"
+
+      - name: Download Dalamud
+        shell: pwsh
+        run: |
+          $dalamudPath = "$env:AppData\XIVLauncher\addon\Hooks\dev"
+          New-Item -ItemType Directory -Force -Path $dalamudPath | Out-Null
+          Invoke-WebRequest -Uri "https://goatcorp.github.io/dalamud-distrib/latest.zip" -OutFile "dalamud.zip"
+          Expand-Archive -Path "dalamud.zip" -DestinationPath $dalamudPath -Force
+          Write-Host "Dalamud unpacked to $dalamudPath"
+
+      - name: Build
+        shell: pwsh
+        run: |
+          dotnet build FaloopMessenger/FaloopMessenger.csproj `
+            -c Release `
+            -p:Version=${{ steps.ver.outputs.assembly }} `
+            -p:AssemblyVersion=${{ steps.ver.outputs.assembly }} `
+            -p:FileVersion=${{ steps.ver.outputs.assembly }}
+
+      - name: Verify build output
+        shell: pwsh
+        run: |
+          $zip = "FaloopMessenger/bin/Release/FaloopMessenger/latest.zip"
+          if (-not (Test-Path $zip)) {
+            Write-Error "DalamudPackager did not produce $zip"
+            exit 1
+          }
+          $size = (Get-Item $zip).Length
+          Write-Host "Built $zip ($([math]::Round($size / 1KB, 1)) KB)"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Faloop Messenger ${{ steps.ver.outputs.version }}"
+          tag_name: "v${{ steps.ver.outputs.version }}"
+          files: FaloopMessenger/bin/Release/FaloopMessenger/latest.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+      - name: Update pluginmaster.json
+        shell: pwsh
+        run: |
+          $path = "pluginmaster.json"
+          $json = Get-Content $path -Raw | ConvertFrom-Json
+          $json[0].AssemblyVersion        = '${{ steps.ver.outputs.assembly }}'
+          $json[0].TestingAssemblyVersion = '${{ steps.ver.outputs.assembly }}'
+          $json | ConvertTo-Json -Depth 10 | Out-File $path -Encoding utf8
+
+      - name: Commit pluginmaster.json bump
+        shell: pwsh
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pluginmaster.json
+          if (git diff --cached --quiet) {
+            Write-Host "No changes to pluginmaster.json"
+          } else {
+            git commit -m "Bump pluginmaster.json to ${{ steps.ver.outputs.assembly }}"
+            git push origin HEAD:main
+          }

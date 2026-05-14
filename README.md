@@ -28,13 +28,28 @@ Built for the Aether DC by default, but configurable to any data center.
 
 ## Install
 
-This plugin isn't in the official Dalamud repository. To use it:
+This plugin isn't in the official Dalamud repository — it ships through this
+repo as a custom plugin source. Add the URL below to Dalamud and the plugin
+will appear in the regular plugin installer.
 
-1. Clone or download this repo.
-2. Build with `dotnet build FaloopMessenger/FaloopMessenger.csproj -c Debug`.
-3. In Dalamud's plugin installer, click the **Dev Plugins** wrench icon and point it at `FaloopMessenger/bin/Debug/FaloopMessenger.dll`.
+1. In FFXIV, open **Dalamud → ⚙ Settings → Experimental** tab.
+2. Under **Custom Plugin Repositories**, paste:
+   ```
+   https://raw.githubusercontent.com/jshade2710/faloop-messenger/main/pluginmaster.json
+   ```
+3. Click **Save & Close**.
+4. Open the plugin installer (`/xlplugins`), search for **Faloop Messenger**, and install.
+5. Updates ship through the same channel — Dalamud will notify you whenever a new release is tagged.
 
-Alternatively, drop the built DLL into `%appdata%\XIVLauncher\devPlugins\FaloopMessenger\`.
+### Build from source (optional)
+
+If you want to build it yourself:
+```
+dotnet build FaloopMessenger/FaloopMessenger.csproj -c Release
+```
+The output is `FaloopMessenger/bin/Release/FaloopMessenger/latest.zip` — drop it
+into `%appdata%\XIVLauncher\devPlugins\FaloopMessenger\` (creating the folder)
+to side-load.
 
 ---
 
