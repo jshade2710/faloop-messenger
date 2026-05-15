@@ -1,19 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <Version>0.1.6.0</Version>
-    <AssemblyVersion>0.1.6.0</AssemblyVersion>
-    <FileVersion>0.1.6.0</FileVersion>
+    <Version>0.1.7.0</Version>
+    <AssemblyVersion>0.1.7.0</AssemblyVersion>
+    <FileVersion>0.1.7.0</FileVersion>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
-  <!-- Bundle the plugin icon into the build output so DalamudPackager
-       includes Images/Icon.png in latest.zip. Dalamud shows the installed
-       plugin's icon from this path. -->
+  <!-- Bundle the plugin icon. Forward slashes everywhere: DalamudPackager
+       uses the Link as the zip entry name, and ZIP entries MUST use '/'
+       (a backslash makes extractors treat "Images\Icon.png" as one weird
+       filename instead of a folder, so Dalamud can't find the icon). -->
   <ItemGroup>
-    <None Include="Images\Icon.png">
+    <None Include="Images/Icon.png">
+      <Link>Images/Icon.png</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>Images\Icon.png</Link>
     </None>
   </ItemGroup>
 </Project>

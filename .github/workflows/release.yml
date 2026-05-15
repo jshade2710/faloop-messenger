@@ -62,7 +62,7 @@ jobs:
             -p:AssemblyVersion=${{ steps.ver.outputs.assembly }} `
             -p:FileVersion=${{ steps.ver.outputs.assembly }}
 
-      - name: Verify build output
+      - name: Verify + normalize zip entry separators
         shell: pwsh
         run: |
           $zip = "FaloopMessenger/bin/Release/FaloopMessenger/latest.zip"
@@ -70,8 +70,29 @@ jobs:
             Write-Error "DalamudPackager did not produce $zip"
             exit 1
           }
+
+          # DalamudPackager on Windows writes zip entries with backslashes
+          # (e.g. "Images\Icon.png"). The ZIP spec requires '/'. With a
+          # backslash, Dalamud treats it as a single odd filename and never
+          # finds the bundled icon. Rebuild the archive with '/' separators.
+          Add-Type -AssemblyName System.IO.Compression
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $tmp = "$zip.norm"
+          $src = [System.IO.Compression.ZipFile]::OpenRead($zip)
+          $dst = [System.IO.Compression.ZipFile]::Open($tmp, [System.IO.Compression.ZipArchiveMode]::Create)
+          foreach ($e in $src.Entries) {
+            $name = $e.FullName -replace '\\','/'
+            $ne = $dst.CreateEntry($name, [System.IO.Compression.CompressionLevel]::Optimal)
+            $rs = $e.Open(); $ws = $ne.Open()
+            $rs.CopyTo($ws)
+            $ws.Dispose(); $rs.Dispose()
+            Write-Host "  entry: $name"
+          }
+          $src.Dispose(); $dst.Dispose()
+          Move-Item -Force $tmp $zip
+
           $size = (Get-Item $zip).Length
-          Write-Host "Built $zip ($([math]::Round($size / 1KB, 1)) KB)"
+          Write-Host "Normalized $zip ($([math]::Round($size / 1KB, 1)) KB)"
 
       - name: Create release
         uses: softprops/action-gh-release@v2
