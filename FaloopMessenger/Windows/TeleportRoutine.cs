@@ -25,6 +25,26 @@ internal static class TeleportRoutine
         // Add more here as the startup audit reports them.
     };
 
+    // Chat output from Teleport()'s async continuations would otherwise run on
+    // a thread-pool thread (the await resumes off the framework thread). Calling
+    // ChatGui from a background thread can corrupt game memory and crash FFXIV,
+    // so every user-facing message is marshaled back onto the framework thread.
+    private static void SafePrint(string message)
+    {
+        try
+        {
+            Plugin.Framework.RunOnFrameworkThread(() =>
+            {
+                try { Plugin.ChatGui.Print(message); }
+                catch (Exception ex) { Plugin.Log.Warning($"[Faloop] Print failed: {ex.Message}"); }
+            });
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.Warning($"[Faloop] SafePrint marshal failed: {ex.Message}");
+        }
+    }
+
     // ── Public verbs ──────────────────────────────────────────────────
 
     public static void SetFlag(SpawnInfo spawn)
@@ -68,16 +88,12 @@ internal static class TeleportRoutine
                     FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentLookingForGroup.DutyCategory.TheHunt;
                 info->LimitRecruitingToWorld = 0;   // 0 = limited to world, 1 = cross-world
 
-                // Comment buffer: FixedSizeArray192<byte> at offset 0x330 of
-                // RecruitmentSub. The write stays well within the struct
-                // (RecruitmentSub is 0x478; comment ends at 0x3F0).
-                const int CommentOffset = 0x330;
-                const int CommentMax    = 192;
-                var commentPtr = (byte*)info + CommentOffset;
-                for (var i = 0; i < CommentMax; i++) commentPtr[i] = 0;
-                var bytes = System.Text.Encoding.UTF8.GetBytes("S Rank");
-                for (var i = 0; i < bytes.Length && i < CommentMax - 1; i++)
-                    commentPtr[i] = bytes[i];
+                // Typed comment setter — FFXIVClientStructs owns the buffer and
+                // its bounds. No hardcoded offset / manual byte math, so a
+                // struct-layout change in a game patch can't turn this into an
+                // out-of-bounds write (which would be an uncatchable AV / hard
+                // crash, not a .NET exception the try/catch could absorb).
+                info->CommentString = "S Rank";
 
                 agent->Show();
             }
@@ -101,7 +117,7 @@ internal static class TeleportRoutine
         {
             if (spawn.TerritoryId == 0)
             {
-                Plugin.ChatGui.Print("[FaloopMessenger] No territory id for this spawn.");
+                SafePrint("[FaloopMessenger] No territory id for this spawn.");
                 return;
             }
 
@@ -119,7 +135,7 @@ internal static class TeleportRoutine
 
             if (string.IsNullOrEmpty(aetheryteName))
             {
-                Plugin.ChatGui.Print($"[FaloopMessenger] No aetheryte known for {spawn.ZoneName}.");
+                SafePrint($"[FaloopMessenger] No aetheryte known for {spawn.ZoneName}.");
                 return;
             }
 
@@ -136,7 +152,7 @@ internal static class TeleportRoutine
         catch (Exception ex)
         {
             Plugin.Log.Error(ex, "[Faloop] Teleport flow failed");
-            Plugin.ChatGui.Print($"[FaloopMessenger] Teleport error: {ex.Message}");
+            SafePrint($"[FaloopMessenger] Teleport error: {ex.Message}");
         }
         finally
         {
