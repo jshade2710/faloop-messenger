@@ -31,6 +31,8 @@ public class SpawnListWindow : Window, IDisposable
 
     public void Dispose() { }
 
+    public override bool DrawConditions() => !Plugin.HiddenForCombat(_plugin.Configuration);
+
     public override void Draw()
     {
         var live = _plugin.Client.GetSnapshot()

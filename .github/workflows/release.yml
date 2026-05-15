@@ -85,11 +85,16 @@ jobs:
       - name: Update pluginmaster.json
         shell: pwsh
         run: |
+          # NOTE: Do NOT round-trip through ConvertFrom-Json/ConvertTo-Json —
+          # PowerShell unwraps a single-element array into a bare object, which
+          # breaks the Dalamud repo schema (it must stay a JSON array). Just
+          # rewrite the two version lines via regex, preserving structure.
           $path = "pluginmaster.json"
-          $json = Get-Content $path -Raw | ConvertFrom-Json
-          $json[0].AssemblyVersion        = '${{ steps.ver.outputs.assembly }}'
-          $json[0].TestingAssemblyVersion = '${{ steps.ver.outputs.assembly }}'
-          $json | ConvertTo-Json -Depth 10 | Out-File $path -Encoding utf8
+          $v    = '${{ steps.ver.outputs.assembly }}'
+          $text = Get-Content $path -Raw
+          $text = $text -replace '("AssemblyVersion":\s*")[^"]*(")',        "`${1}$v`${2}"
+          $text = $text -replace '("TestingAssemblyVersion":\s*")[^"]*(")', "`${1}$v`${2}"
+          Set-Content -Path $path -Value $text -NoNewline -Encoding utf8
 
       - name: Commit pluginmaster.json bump
         shell: pwsh
