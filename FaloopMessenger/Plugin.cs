@@ -133,9 +133,15 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     // True when the spawn windows should be suppressed this frame because the
-    // user enabled "hide during combat" and is currently in combat.
-    public static bool HiddenForCombat(Configuration cfg) =>
-        cfg.HideDuringCombat && Condition[ConditionFlag.InCombat];
+    // user enabled "hide in instances" and is currently bound by a duty
+    // (dungeon / trial / raid / deep dungeon / variant dungeon). Combat in the
+    // open world (e.g. fighting the S-rank itself) does NOT hide the tracker.
+    public static bool HiddenInInstance(Configuration cfg) =>
+        cfg.HideInInstance && (
+            Condition[ConditionFlag.BoundByDuty]   ||
+            Condition[ConditionFlag.BoundByDuty56] ||
+            Condition[ConditionFlag.BoundByDuty95] ||
+            Condition[ConditionFlag.InDeepDungeon]);
 
     private void OnCommand(string command, string args)        => MainWindow.Toggle();
     private void OnMiniCommand(string command, string args)    => MiniWindow.Toggle();

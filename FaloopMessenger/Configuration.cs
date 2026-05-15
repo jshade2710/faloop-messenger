@@ -30,9 +30,9 @@ public class Configuration : IPluginConfiguration
     public string DataCenter { get; set; } = "Aether"; // "" / "All" = no filter
 
     // Display / chat
-    public int         MaxEntries       { get; set; } = 50;
-    public PingChannel PingChannel      { get; set; } = PingChannel.Echo;
-    public bool        HideDuringCombat { get; set; } = false;
+    public int         MaxEntries     { get; set; } = 50;
+    public PingChannel PingChannel    { get; set; } = PingChannel.Echo;
+    public bool        HideInInstance { get; set; } = false;
 
     // Auto-notify when a spawn report arrives
     public bool AutoEchoOnSpawn  { get; set; } = true;

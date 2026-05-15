@@ -126,10 +126,10 @@ public class ConfigWindow : Window, IDisposable
         ImGui.Separator();
         ImGui.Spacing();
 
-        var hideCombat = Config.HideDuringCombat;
-        if (ImGui.Checkbox("Hide tracker windows while in combat", ref hideCombat))
+        var hideInst = Config.HideInInstance;
+        if (ImGui.Checkbox("Hide tracker windows in instanced duties", ref hideInst))
         {
-            Config.HideDuringCombat = hideCombat;
+            Config.HideInInstance = hideInst;
             Config.Save();
         }
         ImGui.SameLine(0, 6f);
@@ -137,8 +137,10 @@ public class ConfigWindow : Window, IDisposable
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(
                 "When enabled, the /faloop, /faloopmini and /faloopcompact windows\n" +
-                "are hidden while you're in combat and reappear automatically when\n" +
-                "you leave combat. They stay 'open' — just not drawn.");
+                "are hidden while you're in an instanced duty (dungeon, trial,\n" +
+                "raid, deep dungeon, variant dungeon) and reappear automatically\n" +
+                "when you leave. Open-world combat — including fighting the S-rank\n" +
+                "itself — does NOT hide them. They stay 'open', just not drawn.");
     }
 
     // ── Notifications ────────────────────────────────────────────────

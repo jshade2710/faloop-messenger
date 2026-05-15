@@ -26,9 +26,9 @@ public class MainWindow : Window, IDisposable
 
     public void Dispose() { }
 
-    // Suppress the window entirely (without closing it) while in combat,
-    // if the user enabled that option.
-    public override bool DrawConditions() => !Plugin.HiddenForCombat(_plugin.Configuration);
+    // Suppress the window entirely (without closing it) while in an instanced
+    // duty, if the user enabled that option.
+    public override bool DrawConditions() => !Plugin.HiddenInInstance(_plugin.Configuration);
 
     public override void Draw()
     {
