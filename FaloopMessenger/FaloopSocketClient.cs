@@ -34,6 +34,14 @@ public class FaloopSocketClient : IDisposable
     public event System.Action?            OnUpdate;
     public event System.Action<SpawnInfo>? OnNewSpawn;
 
+    // Faloop endpoints in one place. The Socket.IO URL stays configurable
+    // (Configuration.SocketUrl) for power users; the REST + origin are stable.
+    private const string FaloopOrigin     = "https://faloop.app";
+    private const string FaloopBase       = "https://faloop.app/";
+    private const string FaloopLoginRef   = "https://faloop.app/login";
+    private const string ApiRefresh       = "https://faloop.app/api/auth/user/refresh";
+    private const string ApiLogin         = "https://faloop.app/api/auth/user/login";
+
     private readonly Configuration   _config;
     private readonly List<SpawnInfo> _spawns = new();
     private readonly object          _lock   = new();
@@ -102,7 +110,7 @@ public class FaloopSocketClient : IDisposable
                 Plugin.Log.Information($"[Faloop] Connecting to {wsUrl}");
 
                 using var ws = new ClientWebSocket();
-                ws.Options.SetRequestHeader("Origin",     "https://faloop.app");
+                ws.Options.SetRequestHeader("Origin",     FaloopOrigin);
                 ws.Options.SetRequestHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0");
 
                 await ws.ConnectAsync(new Uri(wsUrl), ct);
@@ -148,7 +156,7 @@ public class FaloopSocketClient : IDisposable
                 await Task.Delay(TimeSpan.FromMinutes(30), ct);
                 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
                 http.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0");
-                using var req  = new HttpRequestMessage(HttpMethod.Head, "https://faloop.app/");
+                using var req  = new HttpRequestMessage(HttpMethod.Head, FaloopBase);
                 using var resp = await http.SendAsync(req, ct);
                 if (resp.Headers.Date.HasValue)
                     TimeSync.RecordServerTime(resp.Headers.Date.Value);
@@ -168,7 +176,7 @@ public class FaloopSocketClient : IDisposable
     {
         try
         {
-            using var http = MakeBrowserHttpClient("https://faloop.app/");
+            using var http = MakeBrowserHttpClient(FaloopBase);
 
             // Step 1: refresh — pass the previously cached session ID so the
             // server can resume it if still valid (saves a roundtrip and
@@ -179,7 +187,7 @@ public class FaloopSocketClient : IDisposable
                 : $"\"{_config.StoredSessionId}\"";
             var refreshBody = $"{{\"sessionId\":{cachedSession}}}";
             using var refreshContent = new StringContent(refreshBody, Encoding.UTF8, "application/json");
-            using var refreshResp = await http.PostAsync("https://faloop.app/api/auth/user/refresh", refreshContent, ct);
+            using var refreshResp = await http.PostAsync(ApiRefresh, refreshContent, ct);
             if (!refreshResp.IsSuccessStatusCode)
             {
                 Plugin.Log.Warning($"[Faloop] Refresh HTTP {(int)refreshResp.StatusCode}");
@@ -208,7 +216,7 @@ public class FaloopSocketClient : IDisposable
             }
 
             // Step 2: login — uses anon sessionId + JWT to authenticate
-            using var loginHttp = MakeBrowserHttpClient("https://faloop.app/login");
+            using var loginHttp = MakeBrowserHttpClient(FaloopLoginRef);
             // The token starts with "JWT " — pass through unvalidated (default
             // AuthenticationHeaderValue parser rejects schemes containing dots).
             loginHttp.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", token);
@@ -221,7 +229,7 @@ public class FaloopSocketClient : IDisposable
                 sessionId  = anonSession,
             });
             using var loginContent = new StringContent(loginPayload, Encoding.UTF8, "application/json");
-            using var loginResp = await loginHttp.PostAsync("https://faloop.app/api/auth/user/login", loginContent, ct);
+            using var loginResp = await loginHttp.PostAsync(ApiLogin, loginContent, ct);
             if (!loginResp.IsSuccessStatusCode)
             {
                 Plugin.Log.Warning($"[Faloop] Login HTTP {(int)loginResp.StatusCode} — falling back to anonymous");
@@ -267,7 +275,7 @@ public class FaloopSocketClient : IDisposable
         var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
         http.DefaultRequestHeaders.Add("Accept",          "application/json, text/plain, */*");
         http.DefaultRequestHeaders.Add("Accept-Language", "en");
-        http.DefaultRequestHeaders.Add("Origin",          "https://faloop.app");
+        http.DefaultRequestHeaders.Add("Origin",          FaloopOrigin);
         http.DefaultRequestHeaders.Add("Referer",         referer);
         http.DefaultRequestHeaders.Add("User-Agent",      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0");
         return http;

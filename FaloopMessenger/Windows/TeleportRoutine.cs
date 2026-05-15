@@ -48,7 +48,9 @@ internal static class TeleportRoutine
         Plugin.PrintSpawnEcho(spawn);
     }
 
-    // Open Party Finder with the Hunt category and "S Rank" description preset.
+    // Open Party Finder pre-filled for a hunt: Hunt category, "S Rank"
+    // description, and "limit recruiting to current world" enabled (the usual
+    // hunt-train default so off-world randoms don't fill slots).
     public static void OpenPartyFinder()
     {
         try
@@ -59,10 +61,16 @@ internal static class TeleportRoutine
                 if (agent == null) return;
 
                 var info = &agent->StoredRecruitmentInfo;
+
+                // Typed fields — safe (FFXIVClientStructs keeps these accurate
+                // across game patches; no raw offset math).
                 info->SelectedCategory =
                     FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentLookingForGroup.DutyCategory.TheHunt;
+                info->LimitRecruitingToWorld = 0;   // 0 = limited to world, 1 = cross-world
 
-                // Comment buffer is FixedSizeArray192<byte> at offset 0x330.
+                // Comment buffer: FixedSizeArray192<byte> at offset 0x330 of
+                // RecruitmentSub. The write stays well within the struct
+                // (RecruitmentSub is 0x478; comment ends at 0x3F0).
                 const int CommentOffset = 0x330;
                 const int CommentMax    = 192;
                 var commentPtr = (byte*)info + CommentOffset;
