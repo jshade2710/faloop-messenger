@@ -147,32 +147,58 @@ public sealed class Plugin : IDalamudPlugin
     // ">0 → 0" transition, not every redraw.
     private int _lastLiveSCount;
 
-    // Auto-notify when a new spawn arrives from Faloop
+    // Auto-notify when a new spawn arrives from Faloop.
+    //
+    // IMPORTANT: this fires from the WebSocket background thread. ChatGui,
+    // game native calls (PlayChatSound) and ImGui window state are NOT
+    // thread-safe — touching them off the framework thread can corrupt game
+    // memory and crash FFXIV. Everything here is marshaled onto the framework
+    // thread via RunOnFrameworkThread.
     private void HandleNewSpawn(SpawnInfo spawn)
     {
-        if (Configuration.AutoEchoOnSpawn)
-            PrintSpawnEcho(spawn);
+        Framework.RunOnFrameworkThread(() =>
+        {
+            try
+            {
+                if (Configuration.AutoEchoOnSpawn)
+                    PrintSpawnEcho(spawn);
 
-        if (Configuration.AutoSoundOnSpawn)
-            PlayChatSound(Configuration.SoundEffect);
+                if (Configuration.AutoSoundOnSpawn)
+                    PlayChatSound(Configuration.SoundEffect);
 
-        // Pop the mini window open for any S-rank arrival
-        if (Configuration.AutoOpenMiniOnSpawn && spawn.Rank == HuntRank.S)
-            MiniWindow.IsOpen = true;
+                if (Configuration.AutoOpenMiniOnSpawn && spawn.Rank == HuntRank.S)
+                    MiniWindow.IsOpen = true;
+            }
+            catch (System.Exception ex)
+            {
+                Log.Warning($"[Faloop] HandleNewSpawn failed: {ex.Message}");
+            }
+        });
     }
 
     // Fires after every spawn list change (add, mark-dead, remove). Auto-closes
-    // the mini window once the last live S-rank is gone.
+    // the mini window once the last live S-rank is gone. Also fires off the
+    // background thread — marshaled like HandleNewSpawn.
     private void HandleSpawnsChanged()
     {
-        var live = 0;
-        foreach (var s in Client.GetSnapshot())
-            if (!s.IsDead && s.Rank == HuntRank.S) live++;
+        Framework.RunOnFrameworkThread(() =>
+        {
+            try
+            {
+                var live = 0;
+                foreach (var s in Client.GetSnapshot())
+                    if (!s.IsDead && s.Rank == HuntRank.S) live++;
 
-        if (Configuration.AutoCloseMiniWhenIdle && _lastLiveSCount > 0 && live == 0)
-            MiniWindow.IsOpen = false;
+                if (Configuration.AutoCloseMiniWhenIdle && _lastLiveSCount > 0 && live == 0)
+                    MiniWindow.IsOpen = false;
 
-        _lastLiveSCount = live;
+                _lastLiveSCount = live;
+            }
+            catch (System.Exception ex)
+            {
+                Log.Warning($"[Faloop] HandleSpawnsChanged failed: {ex.Message}");
+            }
+        });
     }
 
     // Print the spawn to the local chat log with a clickable map link.

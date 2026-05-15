@@ -88,79 +88,82 @@ internal static class SpawnCardRenderer
         var dl     = ImGui.GetWindowDrawList();
 
         var (rankCol, rankU32, fresh, fadeFrac, spawnKey) = PrepCard(spawn);
-        ImGui.PushID($"card_{spawnKey}");
 
-        var hovered = ImGui.IsMouseHoveringRect(origin, origin + new Vector2(width, StdCardHeight));
-
-        // Card background — fade-in flash that resolves to normal slate
-        var bgNormal = hovered ? Theme.CardBgHov : Theme.CardBg;
-        var bgFlash  = new Vector4(rankCol.X, rankCol.Y, rankCol.Z, 0.35f);
-        var bg       = Vector4.Lerp(bgFlash, bgNormal, fadeFrac);
-        dl.AddRectFilled(origin, origin + new Vector2(width, StdCardHeight),
-            ImGui.GetColorU32(bg), CardRound);
-        dl.AddRectFilled(origin, origin + new Vector2(StdStripeWidth, StdCardHeight),
-            rankU32, CardRound);
-
-        // × dismiss button (top-LEFT, just inside the stripe)
-        if (DrawCloseButton(origin, StdStripeWidth + 4f, 4f, 14f, spawnKey, dl))
+        // ImRaii.PushId auto-pops on dispose — even if something inside the
+        // card render throws — so the ImGui ID stack can never get unbalanced
+        // (an unbalanced stack corrupts ImGui and can hard-crash the game).
+        using (ImRaii.PushId($"card_{spawnKey}"))
         {
-            client.RemoveSpawn(spawn);
-            _firstRenderAt.Remove(spawnKey);
-            TeleportRoutine.InProgress.Remove(spawnKey);
-            ImGui.PopID();
-            return;
-        }
+            var hovered = ImGui.IsMouseHoveringRect(origin, origin + new Vector2(width, StdCardHeight));
 
-        // Rank badge with fresh pulse
-        var badgeCenter = origin + new Vector2(StdStripeWidth + 8f + StdBadgeRadius, StdCardHeight / 2f);
-        DrawRankBadge(badgeCenter, StdBadgeRadius, spawn.Rank, rankU32, fresh, dl, useTitleFont: true);
+            // Card background — fade-in flash that resolves to normal slate
+            var bgNormal = hovered ? Theme.CardBgHov : Theme.CardBg;
+            var bgFlash  = new Vector4(rankCol.X, rankCol.Y, rankCol.Z, 0.35f);
+            var bg       = Vector4.Lerp(bgFlash, bgNormal, fadeFrac);
+            dl.AddRectFilled(origin, origin + new Vector2(width, StdCardHeight),
+                ImGui.GetColorU32(bg), CardRound);
+            dl.AddRectFilled(origin, origin + new Vector2(StdStripeWidth, StdCardHeight),
+                rankU32, CardRound);
 
-        // Text block
-        var textX = origin.X + StdStripeWidth + 12f + StdBadgeRadius * 2f + 12f;
-        var textY = origin.Y + StdCardPad;
+            // × dismiss button (top-LEFT, just inside the stripe)
+            if (DrawCloseButton(origin, StdStripeWidth + 4f, 4f, 14f, spawnKey, dl))
+            {
+                client.RemoveSpawn(spawn);
+                _firstRenderAt.Remove(spawnKey);
+                TeleportRoutine.InProgress.Remove(spawnKey);
+                return;
+            }
 
-        using (Plugin.FontTitle.Push())
-        {
-            dl.AddText(new Vector2(textX, textY), rankU32, spawn.MobName);
+            // Rank badge with fresh pulse
+            var badgeCenter = origin + new Vector2(StdStripeWidth + 8f + StdBadgeRadius, StdCardHeight / 2f);
+            DrawRankBadge(badgeCenter, StdBadgeRadius, spawn.Rank, rankU32, fresh, dl, useTitleFont: true);
+
+            // Text block
+            var textX = origin.X + StdStripeWidth + 12f + StdBadgeRadius * 2f + 12f;
+            var textY = origin.Y + StdCardPad;
+
+            using (Plugin.FontTitle.Push())
+            {
+                dl.AddText(new Vector2(textX, textY), rankU32, spawn.MobName);
+                textY += ImGui.GetTextLineHeight() + 2f;
+            }
+
+            using (Plugin.FontMedium.Push())
+            {
+                var (chipMax, _) = DrawWorldChip(spawn.World, new Vector2(textX, textY), dl);
+                dl.AddText(new Vector2(chipMax.X + 8f, textY + 2f),
+                    ImGui.GetColorU32(Theme.Subtle), spawn.ZoneName);
+                textY = chipMax.Y + 4f;
+            }
+
+            var ageStr = FormatAge(TimeSync.ServerNow - spawn.ReportedAt);
+            var coords = $"({spawn.X:F1}, {spawn.Y:F1})  ·  {ageStr}";
+            var ageCol = fresh ? Theme.AgeFresh : Theme.Subtle;
+            dl.AddText(new Vector2(textX, textY), ImGui.GetColorU32(ageCol), coords);
             textY += ImGui.GetTextLineHeight() + 2f;
+
+            if (!string.IsNullOrEmpty(spawn.Reporter))
+            {
+                dl.AddText(new Vector2(textX, textY),
+                    ImGui.GetColorU32(Theme.Muted),
+                    $"Reporter: {spawn.Reporter}");
+                textY += ImGui.GetTextLineHeight() + 2f;
+            }
+
+            DrawRouteHint(spawn, new Vector2(textX, textY), dl);
+
+            // Map thumbnail
+            var thumbX = origin.X + width - 10f - StdButtonW - 14f - StdThumbSize;
+            var thumbY = origin.Y + (StdCardHeight - StdThumbSize) / 2f;
+            DrawMapThumb(spawn, new Vector2(thumbX, thumbY), StdThumbSize);
+
+            // Action buttons (stacked vertically)
+            var btnX  = origin.X + width - StdButtonW - 10f;
+            var btnY0 = origin.Y + (StdCardHeight - (StdBtnH * 3 + StdBtnGap * 2)) / 2f;
+            DrawActionButtons(spawn, btnX, btnY0, StdButtonW, StdBtnH, StdBtnGap,
+                              stacked: true, spawnKey: spawnKey);
         }
 
-        using (Plugin.FontMedium.Push())
-        {
-            var (chipMax, _) = DrawWorldChip(spawn.World, new Vector2(textX, textY), dl);
-            dl.AddText(new Vector2(chipMax.X + 8f, textY + 2f),
-                ImGui.GetColorU32(Theme.Subtle), spawn.ZoneName);
-            textY = chipMax.Y + 4f;
-        }
-
-        var ageStr = FormatAge(TimeSync.ServerNow - spawn.ReportedAt);
-        var coords = $"({spawn.X:F1}, {spawn.Y:F1})  ·  {ageStr}";
-        var ageCol = fresh ? Theme.AgeFresh : Theme.Subtle;
-        dl.AddText(new Vector2(textX, textY), ImGui.GetColorU32(ageCol), coords);
-        textY += ImGui.GetTextLineHeight() + 2f;
-
-        if (!string.IsNullOrEmpty(spawn.Reporter))
-        {
-            dl.AddText(new Vector2(textX, textY),
-                ImGui.GetColorU32(Theme.Muted),
-                $"Reporter: {spawn.Reporter}");
-            textY += ImGui.GetTextLineHeight() + 2f;
-        }
-
-        DrawRouteHint(spawn, new Vector2(textX, textY), dl);
-
-        // Map thumbnail
-        var thumbX = origin.X + width - 10f - StdButtonW - 14f - StdThumbSize;
-        var thumbY = origin.Y + (StdCardHeight - StdThumbSize) / 2f;
-        DrawMapThumb(spawn, new Vector2(thumbX, thumbY), StdThumbSize);
-
-        // Action buttons (stacked vertically)
-        var btnX  = origin.X + width - StdButtonW - 10f;
-        var btnY0 = origin.Y + (StdCardHeight - (StdBtnH * 3 + StdBtnGap * 2)) / 2f;
-        DrawActionButtons(spawn, btnX, btnY0, StdButtonW, StdBtnH, StdBtnGap,
-                          stacked: true, spawnKey: spawnKey);
-
-        ImGui.PopID();
         ImGui.SetCursorScreenPos(origin + new Vector2(0f, StdCardHeight + 6f));
     }
 
@@ -173,70 +176,64 @@ internal static class SpawnCardRenderer
         var dl     = ImGui.GetWindowDrawList();
 
         var (rankCol, rankU32, fresh, fadeFrac, spawnKey) = PrepCard(spawn);
-        ImGui.PushID($"ccard_{spawnKey}");
 
-        var hovered = ImGui.IsMouseHoveringRect(origin, origin + new Vector2(width, CmpCardHeight));
-
-        var bgNormal = hovered ? Theme.CardBgHov : Theme.CardBg;
-        var bgFlash  = new Vector4(rankCol.X, rankCol.Y, rankCol.Z, 0.35f);
-        var bg       = Vector4.Lerp(bgFlash, bgNormal, fadeFrac);
-        dl.AddRectFilled(origin, origin + new Vector2(width, CmpCardHeight),
-            ImGui.GetColorU32(bg), CardRound);
-        dl.AddRectFilled(origin, origin + new Vector2(CmpStripeWidth, CmpCardHeight),
-            rankU32, CardRound);
-
-        // × dismiss (top-left)
-        if (DrawCloseButton(origin, CmpStripeWidth + 3f, 3f, 12f, spawnKey, dl))
+        using (ImRaii.PushId($"ccard_{spawnKey}"))
         {
-            client.RemoveSpawn(spawn);
-            _firstRenderAt.Remove(spawnKey);
-            TeleportRoutine.InProgress.Remove(spawnKey);
-            ImGui.PopID();
-            return;
+            var hovered = ImGui.IsMouseHoveringRect(origin, origin + new Vector2(width, CmpCardHeight));
+
+            var bgNormal = hovered ? Theme.CardBgHov : Theme.CardBg;
+            var bgFlash  = new Vector4(rankCol.X, rankCol.Y, rankCol.Z, 0.35f);
+            var bg       = Vector4.Lerp(bgFlash, bgNormal, fadeFrac);
+            dl.AddRectFilled(origin, origin + new Vector2(width, CmpCardHeight),
+                ImGui.GetColorU32(bg), CardRound);
+            dl.AddRectFilled(origin, origin + new Vector2(CmpStripeWidth, CmpCardHeight),
+                rankU32, CardRound);
+
+            // × dismiss (top-left)
+            if (DrawCloseButton(origin, CmpStripeWidth + 3f, 3f, 12f, spawnKey, dl))
+            {
+                client.RemoveSpawn(spawn);
+                _firstRenderAt.Remove(spawnKey);
+                TeleportRoutine.InProgress.Remove(spawnKey);
+                return;
+            }
+
+            // Smaller rank badge
+            var badgeCenter = origin + new Vector2(CmpStripeWidth + 6f + CmpBadgeRadius, CmpCardHeight / 2f);
+            DrawRankBadge(badgeCenter, CmpBadgeRadius, spawn.Rank, rankU32, fresh, dl, useTitleFont: false);
+
+            var textX = origin.X + CmpStripeWidth + 8f + CmpBadgeRadius * 2f + 10f;
+            var textY = origin.Y + CmpCardPad;
+
+            // Line 1: mob name + world chip + age (all on one row)
+            using (Plugin.FontMedium.Push())
+            {
+                var nameSize = ImGui.CalcTextSize(spawn.MobName);
+                dl.AddText(new Vector2(textX, textY), rankU32, spawn.MobName);
+                var afterName = textX + nameSize.X + 8f;
+
+                var (chipMax, _) = DrawWorldChip(spawn.World, new Vector2(afterName, textY), dl);
+
+                var ageStr = FormatAge(TimeSync.ServerNow - spawn.ReportedAt);
+                var ageCol = fresh ? Theme.AgeFresh : Theme.Subtle;
+                dl.AddText(new Vector2(chipMax.X + 8f, textY + 2f),
+                    ImGui.GetColorU32(ageCol), $"· {ageStr}");
+
+                textY = chipMax.Y + 4f;
+            }
+
+            // Line 2: route hint (or zone fallback)
+            if (!DrawRouteHint(spawn, new Vector2(textX, textY), dl))
+                dl.AddText(new Vector2(textX, textY), ImGui.GetColorU32(Theme.Subtle), spawn.ZoneName);
+
+            // Action buttons in a horizontal row on the right
+            var totalBtnW = CmpButtonW * 3 + CmpBtnGap * 2;
+            var btnX0     = origin.X + width - totalBtnW - 8f;
+            var btnY      = origin.Y + (CmpCardHeight - CmpBtnH) / 2f;
+            DrawActionButtons(spawn, btnX0, btnY, CmpButtonW, CmpBtnH, CmpBtnGap,
+                              stacked: false, spawnKey: spawnKey);
         }
 
-        // Smaller rank badge
-        var badgeCenter = origin + new Vector2(CmpStripeWidth + 6f + CmpBadgeRadius, CmpCardHeight / 2f);
-        DrawRankBadge(badgeCenter, CmpBadgeRadius, spawn.Rank, rankU32, fresh, dl, useTitleFont: false);
-
-        var textX = origin.X + CmpStripeWidth + 8f + CmpBadgeRadius * 2f + 10f;
-        var textY = origin.Y + CmpCardPad;
-
-        // Line 1: mob name + world chip + age (all on one row)
-        using (Plugin.FontMedium.Push())
-        {
-            // Mob name
-            var nameSize = ImGui.CalcTextSize(spawn.MobName);
-            dl.AddText(new Vector2(textX, textY), rankU32, spawn.MobName);
-            var afterName = textX + nameSize.X + 8f;
-
-            // World chip
-            var (chipMax, _) = DrawWorldChip(spawn.World, new Vector2(afterName, textY), dl);
-
-            // Age (right after chip)
-            var ageStr = FormatAge(TimeSync.ServerNow - spawn.ReportedAt);
-            var ageCol = fresh ? Theme.AgeFresh : Theme.Subtle;
-            dl.AddText(new Vector2(chipMax.X + 8f, textY + 2f),
-                ImGui.GetColorU32(ageCol), $"· {ageStr}");
-
-            textY = chipMax.Y + 4f;
-        }
-
-        // Line 2: route hint (or zone fallback)
-        if (!DrawRouteHint(spawn, new Vector2(textX, textY), dl))
-        {
-            // No route — show zone name as a fallback so the line isn't empty
-            dl.AddText(new Vector2(textX, textY), ImGui.GetColorU32(Theme.Subtle), spawn.ZoneName);
-        }
-
-        // Action buttons in a horizontal row on the right
-        var totalBtnW = CmpButtonW * 3 + CmpBtnGap * 2;
-        var btnX0     = origin.X + width - totalBtnW - 8f;
-        var btnY      = origin.Y + (CmpCardHeight - CmpBtnH) / 2f;
-        DrawActionButtons(spawn, btnX0, btnY, CmpButtonW, CmpBtnH, CmpBtnGap,
-                          stacked: false, spawnKey: spawnKey);
-
-        ImGui.PopID();
         ImGui.SetCursorScreenPos(origin + new Vector2(0f, CmpCardHeight + 4f));
     }
 
