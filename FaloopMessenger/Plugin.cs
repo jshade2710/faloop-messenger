@@ -1,3 +1,4 @@
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.Command;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
@@ -23,6 +24,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IPluginLog             Log             { get; private set; } = null!;
     [PluginService] internal static ITextureProvider       TextureProvider { get; private set; } = null!;
     [PluginService] internal static IFramework             Framework       { get; private set; } = null!;
+    [PluginService] internal static ICondition             Condition       { get; private set; } = null!;
 
     private const string CommandName        = "/faloop";
     private const string MiniCommandName    = "/faloopmini";
@@ -129,6 +131,11 @@ public sealed class Plugin : IDalamudPlugin
         FontTitle.Dispose();
         FontMedium.Dispose();
     }
+
+    // True when the spawn windows should be suppressed this frame because the
+    // user enabled "hide during combat" and is currently in combat.
+    public static bool HiddenForCombat(Configuration cfg) =>
+        cfg.HideDuringCombat && Condition[ConditionFlag.InCombat];
 
     private void OnCommand(string command, string args)        => MainWindow.Toggle();
     private void OnMiniCommand(string command, string args)    => MiniWindow.Toggle();

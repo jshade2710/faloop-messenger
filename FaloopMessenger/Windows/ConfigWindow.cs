@@ -119,6 +119,26 @@ public class ConfigWindow : Window, IDisposable
             Config.MaxEntries = Math.Clamp(max, 10, 500);
             Config.Save();
         }
+
+        ImGui.Spacing();
+        ImGui.Spacing();
+        ImGui.TextColored(Theme.Muted, "DISPLAY");
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var hideCombat = Config.HideDuringCombat;
+        if (ImGui.Checkbox("Hide tracker windows while in combat", ref hideCombat))
+        {
+            Config.HideDuringCombat = hideCombat;
+            Config.Save();
+        }
+        ImGui.SameLine(0, 6f);
+        ImGui.TextDisabled("(?)");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(
+                "When enabled, the /faloop, /faloopmini and /faloopcompact windows\n" +
+                "are hidden while you're in combat and reappear automatically when\n" +
+                "you leave combat. They stay 'open' — just not drawn.");
     }
 
     // ── Notifications ────────────────────────────────────────────────

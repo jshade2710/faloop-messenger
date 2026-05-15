@@ -13,6 +13,7 @@
     "IsHide": false,
     "IsTestingExclusive": false,
     "RepoUrl": "https://github.com/jshade2710/faloop-messenger",
+    "IconUrl": "https://raw.githubusercontent.com/jshade2710/faloop-messenger/main/FaloopMessenger/images/icon.png",
     "DownloadLinkInstall": "https://github.com/jshade2710/faloop-messenger/releases/latest/download/latest.zip",
     "DownloadLinkTesting": "https://github.com/jshade2710/faloop-messenger/releases/latest/download/latest.zip",
     "DownloadLinkUpdate": "https://github.com/jshade2710/faloop-messenger/releases/latest/download/latest.zip",
