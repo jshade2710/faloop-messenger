@@ -34,6 +34,11 @@ public class Configuration : IPluginConfiguration
     public PingChannel PingChannel    { get; set; } = PingChannel.Echo;
     public bool        HideInInstance { get; set; } = false;
 
+    // Hunt-train pull timer: how many real-time minutes after a spawn is
+    // reported before it's customary to pull. Shown as a countdown on the
+    // card, flipping to "PULL" when elapsed. 0 disables the timer.
+    public int PullTimerMinutes { get; set; } = 3;
+
     // Auto-notify when a spawn report arrives
     public bool AutoEchoOnSpawn  { get; set; } = true;
     public bool AutoSoundOnSpawn { get; set; } = true;

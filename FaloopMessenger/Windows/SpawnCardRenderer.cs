@@ -140,6 +140,14 @@ internal static class SpawnCardRenderer
             var coords = $"({spawn.X:F1}, {spawn.Y:F1})  ·  {ageStr}";
             var ageCol = fresh ? Theme.AgeFresh : Theme.Subtle;
             dl.AddText(new Vector2(textX, textY), ImGui.GetColorU32(ageCol), coords);
+
+            var pull = PullSegment(spawn);
+            if (pull.HasValue)
+            {
+                var cw = ImGui.CalcTextSize(coords).X;
+                dl.AddText(new Vector2(textX + cw, textY),
+                    ImGui.GetColorU32(pull.Value.col), $"  ·  {pull.Value.text}");
+            }
             textY += ImGui.GetTextLineHeight() + 2f;
 
             if (!string.IsNullOrEmpty(spawn.Reporter))
@@ -214,10 +222,19 @@ internal static class SpawnCardRenderer
 
                 var (chipMax, _) = DrawWorldChip(spawn.World, new Vector2(afterName, textY), dl);
 
-                var ageStr = FormatAge(TimeSync.ServerNow - spawn.ReportedAt);
-                var ageCol = fresh ? Theme.AgeFresh : Theme.Subtle;
+                var ageStr  = FormatAge(TimeSync.ServerNow - spawn.ReportedAt);
+                var ageCol  = fresh ? Theme.AgeFresh : Theme.Subtle;
+                var ageText = $"· {ageStr}";
                 dl.AddText(new Vector2(chipMax.X + 8f, textY + 2f),
-                    ImGui.GetColorU32(ageCol), $"· {ageStr}");
+                    ImGui.GetColorU32(ageCol), ageText);
+
+                var pull = PullSegment(spawn);
+                if (pull.HasValue)
+                {
+                    var aw = ImGui.CalcTextSize(ageText).X;
+                    dl.AddText(new Vector2(chipMax.X + 8f + aw + 6f, textY + 2f),
+                        ImGui.GetColorU32(pull.Value.col), pull.Value.text);
+                }
 
                 textY = chipMax.Y + 4f;
             }
@@ -539,4 +556,17 @@ internal static class SpawnCardRenderer
             : age.TotalMinutes >= 1
                 ? $"{(int)age.TotalMinutes}m{age.Seconds:D2}s"
                 : $"{age.Seconds}s";
+
+    // Hunt-train pull timer segment, or null when the timer is disabled.
+    // Counts down "pull in Xm Ys" (amber) then flips to "PULL" (green).
+    private static (string text, Vector4 col)? PullSegment(SpawnInfo spawn)
+    {
+        var mins = Plugin.Config.PullTimerMinutes;
+        if (mins <= 0) return null;
+
+        var remaining = TimeSpan.FromMinutes(mins) - (TimeSync.ServerNow - spawn.ReportedAt);
+        return remaining > TimeSpan.Zero
+            ? ($"pull in {FormatAge(remaining)}", Theme.PullWait)
+            : ("PULL", Theme.PullReady);
+    }
 }

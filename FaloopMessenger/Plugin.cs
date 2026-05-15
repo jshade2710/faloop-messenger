@@ -33,6 +33,10 @@ public sealed class Plugin : IDalamudPlugin
     public Configuration      Configuration { get; init; }
     public FaloopSocketClient Client        { get; init; }
 
+    // Static mirror so the static card renderer can read settings without a
+    // Plugin reference (consistent with the static services above).
+    internal static Configuration Config { get; private set; } = null!;
+
     // Game fonts for nicer card typography. Static so windows/widgets can use
     // them without juggling a Plugin reference.
     internal static IFontHandle FontTitle  { get; private set; } = null!;   // ~22px AXIS
@@ -47,6 +51,7 @@ public sealed class Plugin : IDalamudPlugin
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        Config        = Configuration;
 
         // Migrate stale URLs from earlier plugin versions. Faloop's Socket.IO server
         // lives at /comms/socket.io, not /socket.io.

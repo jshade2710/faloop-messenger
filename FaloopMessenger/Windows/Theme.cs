@@ -29,6 +29,10 @@ internal static class Theme
     public static readonly Vector4 AgeFresh  = new(0.45f, 0.95f, 1.00f, 1.00f);
     public static readonly Vector4 Warn      = new(1.00f, 0.75f, 0.10f, 1.00f);
 
+    // Hunt-train pull timer: amber while counting down, bright green at "PULL".
+    public static readonly Vector4 PullWait  = new(1.00f, 0.70f, 0.20f, 1.00f);
+    public static readonly Vector4 PullReady = new(0.30f, 0.95f, 0.40f, 1.00f);
+
     // Gold button palette (used for Party/Ping/TP)
     public static readonly Vector4 BtnGold     = new(0.78f, 0.65f, 0.15f, 1f);
     public static readonly Vector4 BtnGoldHov  = new(0.92f, 0.78f, 0.20f, 1f);

@@ -141,6 +141,24 @@ public class ConfigWindow : Window, IDisposable
                 "raid, deep dungeon, variant dungeon) and reappear automatically\n" +
                 "when you leave. Open-world combat — including fighting the S-rank\n" +
                 "itself — does NOT hide them. They stay 'open', just not drawn.");
+
+        ImGui.Spacing();
+        ImGui.TextColored(Theme.Muted, "Pull timer (minutes, 0 = off)");
+        var pull = Config.PullTimerMinutes;
+        ImGui.SetNextItemWidth(80f);
+        if (ImGui.InputInt("##pulltimer", ref pull))
+        {
+            Config.PullTimerMinutes = Math.Clamp(pull, 0, 60);
+            Config.Save();
+        }
+        ImGui.SameLine(0, 6f);
+        ImGui.TextDisabled("(?)");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(
+                "Hunt-train convention: wait this many real-time minutes after a\n" +
+                "spawn is reported before pulling. The card shows a countdown\n" +
+                "(\"pull in 1m23s\", amber) that flips to a green \"PULL\" when the\n" +
+                "wait is up. Set to 0 to hide the timer entirely.");
     }
 
     // ── Notifications ────────────────────────────────────────────────
