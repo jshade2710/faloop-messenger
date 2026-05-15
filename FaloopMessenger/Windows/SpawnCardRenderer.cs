@@ -558,15 +558,32 @@ internal static class SpawnCardRenderer
                 : $"{age.Seconds}s";
 
     // Hunt-train pull timer segment, or null when the timer is disabled.
-    // Counts down "pull in Xm Ys" (amber) then flips to "PULL" (green).
+    // Counts down "pull in Xm Ys · HH:MM ET" (amber) then flips to "PULL".
+    // The ET value is the Eorzean clock time the pull is due, so you can
+    // watch the in-game clock and pull when it reads that value.
     private static (string text, Vector4 col)? PullSegment(SpawnInfo spawn)
     {
         var mins = Plugin.Config.PullTimerMinutes;
         if (mins <= 0) return null;
 
         var remaining = TimeSpan.FromMinutes(mins) - (TimeSync.ServerNow - spawn.ReportedAt);
-        return remaining > TimeSpan.Zero
-            ? ($"pull in {FormatAge(remaining)}", Theme.PullWait)
-            : ("PULL", Theme.PullReady);
+        if (remaining <= TimeSpan.Zero)
+            return ("PULL", Theme.PullReady);
+
+        // Project the pull moment onto the player's wall clock so the ET we
+        // show matches their in-game Eorzean clock when the countdown ends.
+        var et = EorzeaClock(DateTime.UtcNow + remaining);
+        return ($"pull in {FormatAge(remaining)}  ·  {et} ET", Theme.PullWait);
+    }
+
+    // Convert a real-world UTC instant to FFXIV Eorzean clock "HH:MM".
+    // 1 Eorzean hour = 175 real seconds → Eorzean seconds = unix * 3600/175.
+    private static string EorzeaClock(DateTime utc)
+    {
+        var unix = (long)(utc - DateTime.UnixEpoch).TotalSeconds;
+        var et   = (long)(unix * (3600.0 / 175.0));
+        var h    = (et / 3600) % 24;
+        var m    = (et / 60)   % 60;
+        return $"{h:D2}:{m:D2}";
     }
 }

@@ -157,8 +157,10 @@ public class ConfigWindow : Window, IDisposable
             ImGui.SetTooltip(
                 "Hunt-train convention: wait this many real-time minutes after a\n" +
                 "spawn is reported before pulling. The card shows a countdown\n" +
-                "(\"pull in 1m23s\", amber) that flips to a green \"PULL\" when the\n" +
-                "wait is up. Set to 0 to hide the timer entirely.");
+                "(\"pull in 1m23s · 07:30 ET\", amber) — the ET value is the\n" +
+                "Eorzean clock time the pull is due, so you can watch the in-game\n" +
+                "clock. It flips to a green \"PULL\" when the wait is up. Set to 0\n" +
+                "to hide the timer entirely.");
     }
 
     // ── Notifications ────────────────────────────────────────────────
