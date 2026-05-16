@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Utility.Raii;
@@ -44,6 +45,29 @@ public class ConfigWindow : Window, IDisposable
         if (!tab.Success) return;
         ImGui.Spacing();
         body();
+    }
+
+    // Worlds belonging to the given data center, resolved to display names via
+    // Lumina and sorted alphabetically. "All"/empty DC falls back to Aether
+    // (the only DC we have a verified world set for). Runs on the framework
+    // (draw) thread, so the Lumina lookup is safe here.
+    private static (string name, uint id)[] WorldsForDc(string dc)
+    {
+        var key = string.IsNullOrEmpty(dc) || dc.Equals("All", StringComparison.OrdinalIgnoreCase)
+            ? "Aether"
+            : dc;
+        if (!FaloopData.DataCenters.TryGetValue(key, out var ids))
+            return Array.Empty<(string, uint)>();
+
+        var sheet = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.World>();
+        return ids
+            .Select(id => (
+                name: sheet != null && sheet.TryGetRow(id, out var row)
+                    ? row.Name.ToString()
+                    : id.ToString(),
+                id))
+            .OrderBy(w => w.name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     // ── Account ──────────────────────────────────────────────────────
@@ -101,6 +125,67 @@ public class ConfigWindow : Window, IDisposable
                 if (selected) ImGui.SetItemDefaultFocus();
             }
             ImGui.EndCombo();
+        }
+        ImGui.Spacing();
+
+        // Per-world filter — tick exactly the worlds you want notifications
+        // from (e.g. just Gilgamesh + Sargatanas). Off = whole data center.
+        var worldFilter = Config.WorldFilterEnabled;
+        if (ImGui.Checkbox("Only notify for selected worlds", ref worldFilter))
+        {
+            Config.WorldFilterEnabled = worldFilter;
+            Config.Save();
+        }
+        ImGui.SameLine(0, 6f);
+        ImGui.TextDisabled("(?)");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(
+                "When off, every world in the data center notifies (default).\n" +
+                "When on, only the worlds you check below send spawn cards,\n" +
+                "chat echoes and sounds — the rest of the DC is ignored.");
+
+        if (Config.WorldFilterEnabled)
+        {
+            var worlds = WorldsForDc(Config.DataCenter);
+            if (worlds.Length == 0)
+            {
+                ImGui.Indent(20f);
+                ImGui.TextColored(Theme.Muted, "No world list for this data center.");
+                ImGui.Unindent(20f);
+            }
+            else
+            {
+                ImGui.Indent(20f);
+
+                if (ImGui.SmallButton("All##worlds"))
+                {
+                    Config.WorldWhitelist = worlds.Select(w => w.id).ToList();
+                    Config.Save();
+                }
+                ImGui.SameLine(0, 6f);
+                if (ImGui.SmallButton("None##worlds"))
+                {
+                    Config.WorldWhitelist.Clear();
+                    Config.Save();
+                }
+
+                // Two columns so 8+ worlds stay compact.
+                for (var i = 0; i < worlds.Length; i++)
+                {
+                    var (name, id) = worlds[i];
+                    var on = Config.WorldWhitelist.Contains(id);
+                    if (ImGui.Checkbox($"{name}##w{id}", ref on))
+                    {
+                        if (on) { if (!Config.WorldWhitelist.Contains(id)) Config.WorldWhitelist.Add(id); }
+                        else    Config.WorldWhitelist.Remove(id);
+                        Config.Save();
+                    }
+                    if (i % 2 == 0 && i + 1 < worlds.Length)
+                        ImGui.SameLine(180f);
+                }
+
+                ImGui.Unindent(20f);
+            }
         }
         ImGui.Spacing();
 

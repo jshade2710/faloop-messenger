@@ -1,5 +1,6 @@
 using Dalamud.Configuration;
 using System;
+using System.Collections.Generic;
 
 namespace FaloopMessenger;
 
@@ -28,6 +29,12 @@ public class Configuration : IPluginConfiguration
     // Filtering
     public bool   OnlySRanks { get; set; } = true;
     public string DataCenter { get; set; } = "Aether"; // "" / "All" = no filter
+
+    // Per-world filter (subset of the data center). Off by default so existing
+    // users keep getting the whole DC. When enabled, only spawns on a world in
+    // WorldWhitelist (Lumina World row IDs) notify — everything else is dropped.
+    public bool        WorldFilterEnabled { get; set; } = false;
+    public List<uint>  WorldWhitelist     { get; set; } = new();
 
     // Display / chat
     public int         MaxEntries     { get; set; } = 50;

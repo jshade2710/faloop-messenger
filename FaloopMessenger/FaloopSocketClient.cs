@@ -472,6 +472,11 @@ public class FaloopSocketClient : IDisposable
             return;
         }
 
+        // Per-world filter (a subset of the DC the user explicitly ticked).
+        // Only applies when enabled; the empty/disabled case keeps the full DC.
+        if (_config.WorldFilterEnabled && !_config.WorldWhitelist.Contains(worldId))
+            return;
+
         // The nested "data" object holds spawn-specific fields (Spawn record)
         if (!mobData.TryGetProperty("data", out var spawnData)) return;
 
