@@ -8,6 +8,10 @@ namespace FaloopMessenger;
 
 public enum MobRank { B, A, S, SS, FATE }
 
+// FFXIV expansions, ordered. Used for the optional per-expansion spawn
+// filter — every hunt zone's TerritoryType ID falls cleanly into one bucket.
+public enum Expansion { ARR, HW, StB, ShB, EW, DT }
+
 public record MobData(uint BNpcId, MobRank Rank);
 
 public static class FaloopData
@@ -357,6 +361,23 @@ public static class FaloopData
             _slugByTerritory = d;
         }
         return _slugByTerritory.TryGetValue(territoryId, out var slug) ? slug : null;
+    }
+
+    // Classify a hunt zone's TerritoryType ID into its expansion. The hunt
+    // territories are contiguous within each expansion's ID block (ARR ≤ 180,
+    // HW 397–402, StB 612–622, ShB 813–818, EW 956–961, DT 1187+), so simple
+    // thresholds are robust — future expansions get higher IDs and fall into
+    // the DT-and-beyond bucket until the table is extended. Returns null for
+    // an unknown/zero territory so callers can choose not to filter it out.
+    public static Expansion? ExpansionForTerritory(uint territoryId)
+    {
+        if (territoryId == 0) return null;
+        if (territoryId <  397) return Expansion.ARR;
+        if (territoryId <  500) return Expansion.HW;
+        if (territoryId <  700) return Expansion.StB;
+        if (territoryId <  900) return Expansion.ShB;
+        if (territoryId < 1100) return Expansion.EW;
+        return Expansion.DT;
     }
 
     // Faloop zone POI ID → raw "x,y" coordinate string (2048-scale)

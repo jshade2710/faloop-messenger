@@ -36,6 +36,13 @@ public class Configuration : IPluginConfiguration
     public bool        WorldFilterEnabled { get; set; } = false;
     public List<uint>  WorldWhitelist     { get; set; } = new();
 
+    // Per-expansion filter (e.g. "only Dawntrail"). Off by default. When on,
+    // only spawns whose zone belongs to an expansion in ExpansionWhitelist
+    // (stored as (int)Expansion) notify. Spawns with an unknown territory are
+    // never dropped by this filter.
+    public bool       ExpansionFilterEnabled { get; set; } = false;
+    public List<int>  ExpansionWhitelist     { get; set; } = new();
+
     // Display / chat
     public int         MaxEntries     { get; set; } = 50;
     public PingChannel PingChannel    { get; set; } = PingChannel.Echo;

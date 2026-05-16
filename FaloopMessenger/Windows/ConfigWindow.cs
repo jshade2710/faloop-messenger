@@ -16,6 +16,17 @@ public class ConfigWindow : Window, IDisposable
 
     private static readonly string[] DcOptions = { "All", "Aether" };
 
+    // Expansion → display label for the per-expansion filter checklist.
+    private static readonly (Expansion exp, string label)[] Expansions =
+    {
+        (Expansion.ARR, "A Realm Reborn"),
+        (Expansion.HW,  "Heavensward"),
+        (Expansion.StB, "Stormblood"),
+        (Expansion.ShB, "Shadowbringers"),
+        (Expansion.EW,  "Endwalker"),
+        (Expansion.DT,  "Dawntrail"),
+    };
+
     public ConfigWindow(Plugin plugin) : base("Faloop · Settings###FaloopConfig")
     {
         SizeConstraints = new WindowSizeConstraints
@@ -186,6 +197,58 @@ public class ConfigWindow : Window, IDisposable
 
                 ImGui.Unindent(20f);
             }
+        }
+        ImGui.Spacing();
+
+        // Per-expansion filter — e.g. only show Dawntrail S-ranks. Off by
+        // default; mirrors the world-filter opt-in pattern.
+        var expFilter = Config.ExpansionFilterEnabled;
+        if (ImGui.Checkbox("Only notify for selected expansions", ref expFilter))
+        {
+            Config.ExpansionFilterEnabled = expFilter;
+            Config.Save();
+        }
+        ImGui.SameLine(0, 6f);
+        ImGui.TextDisabled("(?)");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(
+                "When off, hunts from every expansion notify (default).\n" +
+                "When on, only the expansions you check below send spawn\n" +
+                "cards, chat echoes and sounds — e.g. tick only Dawntrail\n" +
+                "to ignore older-expansion hunt trains.");
+
+        if (Config.ExpansionFilterEnabled)
+        {
+            ImGui.Indent(20f);
+
+            if (ImGui.SmallButton("All##exp"))
+            {
+                Config.ExpansionWhitelist = Expansions.Select(e => (int)e.exp).ToList();
+                Config.Save();
+            }
+            ImGui.SameLine(0, 6f);
+            if (ImGui.SmallButton("None##exp"))
+            {
+                Config.ExpansionWhitelist.Clear();
+                Config.Save();
+            }
+
+            for (var i = 0; i < Expansions.Length; i++)
+            {
+                var (exp, label) = Expansions[i];
+                var key = (int)exp;
+                var on  = Config.ExpansionWhitelist.Contains(key);
+                if (ImGui.Checkbox($"{label}##exp{key}", ref on))
+                {
+                    if (on) { if (!Config.ExpansionWhitelist.Contains(key)) Config.ExpansionWhitelist.Add(key); }
+                    else    Config.ExpansionWhitelist.Remove(key);
+                    Config.Save();
+                }
+                if (i % 2 == 0 && i + 1 < Expansions.Length)
+                    ImGui.SameLine(200f);
+            }
+
+            ImGui.Unindent(20f);
         }
         ImGui.Spacing();
 

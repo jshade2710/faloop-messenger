@@ -483,6 +483,17 @@ public class FaloopSocketClient : IDisposable
         var zoneSlug = GetString(spawnData, "zoneId2") ?? string.Empty;
         FaloopData.TerritoryTypes.TryGetValue(zoneSlug, out var territoryId);
 
+        // Per-expansion filter (e.g. "only Dawntrail"). Only applies when
+        // enabled. A spawn whose territory we can't classify (unknown zone) is
+        // never dropped here — better to show a slightly-mislabelled card than
+        // to silently swallow a real S-rank.
+        if (_config.ExpansionFilterEnabled)
+        {
+            var exp = FaloopData.ExpansionForTerritory(territoryId);
+            if (exp.HasValue && !_config.ExpansionWhitelist.Contains((int)exp.Value))
+                return;
+        }
+
         // Resolve coordinates — direct "location" field first, then POI lookup
         string? locationStr = GetString(spawnData, "location");
         int zonePoiId = 0;
