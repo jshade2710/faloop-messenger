@@ -33,8 +33,11 @@ public class Configuration : IPluginConfiguration
     // Per-world filter (subset of the data center). Off by default so existing
     // users keep getting the whole DC. When enabled, only spawns on a world in
     // WorldWhitelist (Lumina World row IDs) notify — everything else is dropped.
+    // World row IDs stored as int (not uint) so the settings UI can drive the
+    // world and expansion pickers through one shared helper. JSON on disk is
+    // identical (plain integers), so existing saved configs load unchanged.
     public bool        WorldFilterEnabled { get; set; } = false;
-    public List<uint>  WorldWhitelist     { get; set; } = new();
+    public List<int>   WorldWhitelist     { get; set; } = new();
 
     // Per-expansion filter (e.g. "only Dawntrail"). Off by default. When on,
     // only spawns whose zone belongs to an expansion in ExpansionWhitelist

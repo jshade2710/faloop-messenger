@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
@@ -31,7 +32,7 @@ public class ConfigWindow : Window, IDisposable
     {
         SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new Vector2(460, 380),
+            MinimumSize = new Vector2(480, 460),
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
         };
         _plugin = plugin;
@@ -62,23 +63,102 @@ public class ConfigWindow : Window, IDisposable
     // Lumina and sorted alphabetically. "All"/empty DC falls back to Aether
     // (the only DC we have a verified world set for). Runs on the framework
     // (draw) thread, so the Lumina lookup is safe here.
-    private static (string name, uint id)[] WorldsForDc(string dc)
+    private static (string label, int key)[] WorldsForDc(string dc)
     {
         var key = string.IsNullOrEmpty(dc) || dc.Equals("All", StringComparison.OrdinalIgnoreCase)
             ? "Aether"
             : dc;
         if (!FaloopData.DataCenters.TryGetValue(key, out var ids))
-            return Array.Empty<(string, uint)>();
+            return Array.Empty<(string, int)>();
 
         var sheet = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.World>();
         return ids
             .Select(id => (
-                name: sheet != null && sheet.TryGetRow(id, out var row)
+                label: sheet != null && sheet.TryGetRow(id, out var row)
                     ? row.Name.ToString()
                     : id.ToString(),
-                id))
-            .OrderBy(w => w.name, StringComparer.OrdinalIgnoreCase)
+                key: (int)id))
+            .OrderBy(w => w.label, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    // Shared always-visible multi-select picker used for both the world and
+    // expansion filters. The list stays open (no reveal-on-checkbox); an
+    // "enabled" flag disambiguates the empty whitelist:
+    //   • disabled            → no filter, every item shows checked
+    //   • enabled, whitelist  → only checked items notify
+    //   • enabled, empty list → "None" (nothing notifies — explicit choice)
+    // Unchecking an item while unfiltered materialises the full set first, and
+    // re-checking everything collapses back to the clean "no filter" state.
+    private void FilterPanel(
+        string idTag, string title, string tooltip,
+        (string label, int key)[] items,
+        Func<bool> enabledGet, Action<bool> enabledSet,
+        List<int> whitelist)
+    {
+        ImGui.TextColored(Theme.Muted, title);
+        ImGui.SameLine(0, 6f);
+        ImGui.TextDisabled("(?)");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(tooltip);
+
+        var enabled = enabledGet();
+        var rows    = (items.Length + 1) / 2;
+        var height  = ImGui.GetFrameHeightWithSpacing() * (rows + 1) + 14f;
+
+        using var child = ImRaii.Child($"##panel_{idTag}", new Vector2(-1f, height), true);
+        if (!child.Success) return;
+
+        if (ImGui.SmallButton($"All##{idTag}"))
+        {
+            enabledSet(false);
+            whitelist.Clear();
+            Config.Save();
+            enabled = false;
+        }
+        ImGui.SameLine(0, 6f);
+        if (ImGui.SmallButton($"None##{idTag}"))
+        {
+            enabledSet(true);
+            whitelist.Clear();
+            Config.Save();
+            enabled = true;
+        }
+        ImGui.SameLine(0, 12f);
+        ImGui.TextColored(Theme.Muted,
+            !enabled            ? "all (no filter)"
+            : whitelist.Count == 0 ? "none selected"
+            : $"filtering · {whitelist.Count} selected");
+
+        for (var i = 0; i < items.Length; i++)
+        {
+            var (label, key) = items[i];
+            var on = !enabled || whitelist.Contains(key);
+            if (ImGui.Checkbox($"{label}##{idTag}{key}", ref on))
+            {
+                // First customisation from the unfiltered state: snapshot the
+                // full set so a single uncheck means "all except this".
+                if (!enabled)
+                {
+                    enabledSet(true);
+                    whitelist.Clear();
+                    whitelist.AddRange(items.Select(x => x.key));
+                }
+
+                if (on) { if (!whitelist.Contains(key)) whitelist.Add(key); }
+                else    whitelist.Remove(key);
+
+                // Everything re-checked → collapse to the clean no-filter state.
+                if (items.All(x => whitelist.Contains(x.key)))
+                {
+                    enabledSet(false);
+                    whitelist.Clear();
+                }
+                Config.Save();
+            }
+            if (i % 2 == 0 && i + 1 < items.Length)
+                ImGui.SameLine(190f);
+        }
     }
 
     // ── Account ──────────────────────────────────────────────────────
@@ -120,6 +200,9 @@ public class ConfigWindow : Window, IDisposable
 
     private void DrawFiltersTab()
     {
+        // ── SCOPE ─────────────────────────────────────────────────────
+        Section("SCOPE — which spawns reach you");
+
         ImGui.TextColored(Theme.Muted, "Data center");
         var currentDc = string.IsNullOrEmpty(Config.DataCenter) ? "All" : Config.DataCenter;
         ImGui.SetNextItemWidth(180f);
@@ -139,118 +222,32 @@ public class ConfigWindow : Window, IDisposable
         }
         ImGui.Spacing();
 
-        // Per-world filter — tick exactly the worlds you want notifications
-        // from (e.g. just Gilgamesh + Sargatanas). Off = whole data center.
-        var worldFilter = Config.WorldFilterEnabled;
-        if (ImGui.Checkbox("Only notify for selected worlds", ref worldFilter))
-        {
-            Config.WorldFilterEnabled = worldFilter;
-            Config.Save();
-        }
-        ImGui.SameLine(0, 6f);
-        ImGui.TextDisabled("(?)");
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(
-                "When off, every world in the data center notifies (default).\n" +
-                "When on, only the worlds you check below send spawn cards,\n" +
-                "chat echoes and sounds — the rest of the DC is ignored.");
+        var worlds = WorldsForDc(Config.DataCenter);
+        if (worlds.Length == 0)
+            ImGui.TextColored(Theme.Muted, "No world list for this data center.");
+        else
+            FilterPanel(
+                "worlds", "Worlds",
+                "Tick the worlds you want notifications from (e.g. just\n" +
+                "Gilgamesh + Sargatanas). \"All\" = the whole data center.",
+                worlds,
+                () => Config.WorldFilterEnabled,
+                v  => Config.WorldFilterEnabled = v,
+                Config.WorldWhitelist);
 
-        if (Config.WorldFilterEnabled)
-        {
-            var worlds = WorldsForDc(Config.DataCenter);
-            if (worlds.Length == 0)
-            {
-                ImGui.Indent(20f);
-                ImGui.TextColored(Theme.Muted, "No world list for this data center.");
-                ImGui.Unindent(20f);
-            }
-            else
-            {
-                ImGui.Indent(20f);
-
-                if (ImGui.SmallButton("All##worlds"))
-                {
-                    Config.WorldWhitelist = worlds.Select(w => w.id).ToList();
-                    Config.Save();
-                }
-                ImGui.SameLine(0, 6f);
-                if (ImGui.SmallButton("None##worlds"))
-                {
-                    Config.WorldWhitelist.Clear();
-                    Config.Save();
-                }
-
-                // Two columns so 8+ worlds stay compact.
-                for (var i = 0; i < worlds.Length; i++)
-                {
-                    var (name, id) = worlds[i];
-                    var on = Config.WorldWhitelist.Contains(id);
-                    if (ImGui.Checkbox($"{name}##w{id}", ref on))
-                    {
-                        if (on) { if (!Config.WorldWhitelist.Contains(id)) Config.WorldWhitelist.Add(id); }
-                        else    Config.WorldWhitelist.Remove(id);
-                        Config.Save();
-                    }
-                    if (i % 2 == 0 && i + 1 < worlds.Length)
-                        ImGui.SameLine(180f);
-                }
-
-                ImGui.Unindent(20f);
-            }
-        }
         ImGui.Spacing();
 
-        // Per-expansion filter — e.g. only show Dawntrail S-ranks. Off by
-        // default; mirrors the world-filter opt-in pattern.
-        var expFilter = Config.ExpansionFilterEnabled;
-        if (ImGui.Checkbox("Only notify for selected expansions", ref expFilter))
-        {
-            Config.ExpansionFilterEnabled = expFilter;
-            Config.Save();
-        }
-        ImGui.SameLine(0, 6f);
-        ImGui.TextDisabled("(?)");
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(
-                "When off, hunts from every expansion notify (default).\n" +
-                "When on, only the expansions you check below send spawn\n" +
-                "cards, chat echoes and sounds — e.g. tick only Dawntrail\n" +
-                "to ignore older-expansion hunt trains.");
+        FilterPanel(
+            "exp", "Expansions",
+            "Tick the expansions you want notifications from — e.g. only\n" +
+            "Dawntrail to ignore older-expansion hunt trains.",
+            Expansions.Select(e => (e.label, (int)e.exp)).ToArray(),
+            () => Config.ExpansionFilterEnabled,
+            v  => Config.ExpansionFilterEnabled = v,
+            Config.ExpansionWhitelist);
 
-        if (Config.ExpansionFilterEnabled)
-        {
-            ImGui.Indent(20f);
-
-            if (ImGui.SmallButton("All##exp"))
-            {
-                Config.ExpansionWhitelist = Expansions.Select(e => (int)e.exp).ToList();
-                Config.Save();
-            }
-            ImGui.SameLine(0, 6f);
-            if (ImGui.SmallButton("None##exp"))
-            {
-                Config.ExpansionWhitelist.Clear();
-                Config.Save();
-            }
-
-            for (var i = 0; i < Expansions.Length; i++)
-            {
-                var (exp, label) = Expansions[i];
-                var key = (int)exp;
-                var on  = Config.ExpansionWhitelist.Contains(key);
-                if (ImGui.Checkbox($"{label}##exp{key}", ref on))
-                {
-                    if (on) { if (!Config.ExpansionWhitelist.Contains(key)) Config.ExpansionWhitelist.Add(key); }
-                    else    Config.ExpansionWhitelist.Remove(key);
-                    Config.Save();
-                }
-                if (i % 2 == 0 && i + 1 < Expansions.Length)
-                    ImGui.SameLine(200f);
-            }
-
-            ImGui.Unindent(20f);
-        }
-        ImGui.Spacing();
+        // ── HUNTS ─────────────────────────────────────────────────────
+        Section("HUNTS");
 
         var onlyS = Config.OnlySRanks;
         if (ImGui.Checkbox("Show S-ranks only", ref onlyS))
@@ -258,21 +255,23 @@ public class ConfigWindow : Window, IDisposable
             Config.OnlySRanks = onlyS;
             Config.Save();
         }
-        ImGui.Spacing();
+        ImGui.SameLine(0, 6f);
+        ImGui.TextDisabled("(?)");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("When off, A and B ranks are tracked too (still DC/world/expansion filtered).");
 
-        var max = Config.MaxEntries;
+        ImGui.Spacing();
+        ImGui.TextColored(Theme.Muted, "Max entries kept");
         ImGui.SetNextItemWidth(80f);
-        if (ImGui.InputInt("Max entries kept##max", ref max))
+        var max = Config.MaxEntries;
+        if (ImGui.InputInt("##max", ref max))
         {
             Config.MaxEntries = Math.Clamp(max, 10, 500);
             Config.Save();
         }
 
-        ImGui.Spacing();
-        ImGui.Spacing();
-        ImGui.TextColored(Theme.Muted, "DISPLAY");
-        ImGui.Separator();
-        ImGui.Spacing();
+        // ── DISPLAY ───────────────────────────────────────────────────
+        Section("DISPLAY");
 
         var hideInst = Config.HideInInstance;
         if (ImGui.Checkbox("Hide tracker windows in instanced duties", ref hideInst))
@@ -311,13 +310,21 @@ public class ConfigWindow : Window, IDisposable
                 "to hide the timer entirely.");
     }
 
+    // Consistent section divider used across the tabs.
+    private static void Section(string label)
+    {
+        ImGui.Spacing();
+        ImGui.Spacing();
+        ImGui.TextColored(Theme.Muted, label);
+        ImGui.Separator();
+        ImGui.Spacing();
+    }
+
     // ── Notifications ────────────────────────────────────────────────
 
     private void DrawNotificationsTab()
     {
-        ImGui.TextColored(Theme.Muted, "ON NEW SPAWN");
-        ImGui.Separator();
-        ImGui.Spacing();
+        Section("ON NEW SPAWN");
 
         var autoEcho = Config.AutoEchoOnSpawn;
         if (ImGui.Checkbox("Print to chat (with clickable map link)", ref autoEcho))
@@ -346,11 +353,7 @@ public class ConfigWindow : Window, IDisposable
         if (ImGui.Button("Test##se-test"))
             Plugin.PlayChatSound(Config.SoundEffect);
 
-        ImGui.Spacing();
-        ImGui.Spacing();
-        ImGui.TextColored(Theme.Muted, "MINI WINDOW  (/faloopmini)");
-        ImGui.Separator();
-        ImGui.Spacing();
+        Section("MINI WINDOW  (/faloopmini)");
 
         var autoOpen = Config.AutoOpenMiniOnSpawn;
         if (ImGui.Checkbox("Auto-open when an S-rank spawns", ref autoOpen))
@@ -366,11 +369,7 @@ public class ConfigWindow : Window, IDisposable
             Config.Save();
         }
 
-        ImGui.Spacing();
-        ImGui.Spacing();
-        ImGui.TextColored(Theme.Muted, "PING BUTTON");
-        ImGui.Separator();
-        ImGui.Spacing();
+        Section("PING BUTTON");
 
         ImGui.TextWrapped(
             "Ping prints a clickable map link to your local Echo chat. " +
@@ -380,11 +379,7 @@ public class ConfigWindow : Window, IDisposable
             "Sending to other channels (party / yell / etc.) requires game " +
             "chat-send infrastructure that isn't implemented yet.");
 
-        ImGui.Spacing();
-        ImGui.Spacing();
-        ImGui.TextColored(Theme.Muted, "TP BUTTON");
-        ImGui.Separator();
-        ImGui.Spacing();
+        Section("TP BUTTON");
 
         ImGui.TextWrapped(
             "TP uses Lifestream to switch worlds (if needed) and teleport to " +
@@ -426,11 +421,7 @@ public class ConfigWindow : Window, IDisposable
             Config.Save();
         }
 
-        ImGui.Spacing();
-        ImGui.Spacing();
-        ImGui.TextColored(Theme.Muted, "TROUBLESHOOTING");
-        ImGui.Separator();
-        ImGui.Spacing();
+        Section("TROUBLESHOOTING");
 
         ImGui.TextColored(Theme.Warn,
             "If the tracker stays blank after connecting, enable Verbose logging");
