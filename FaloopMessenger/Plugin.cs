@@ -53,6 +53,14 @@ public sealed class Plugin : IDalamudPlugin
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         Config        = Configuration;
 
+        // Decrypt the password blob and one-time-migrate any pre-0.2 plaintext
+        // password into the encrypted-at-rest form.
+        if (Configuration.LoadSecrets())
+        {
+            Configuration.Save();
+            Log.Information("[Faloop] Migrated plaintext password to encrypted storage.");
+        }
+
         // Migrate stale URLs from earlier plugin versions. Faloop's Socket.IO server
         // lives at /comms/socket.io, not /socket.io.
         if (!Configuration.SocketUrl.Contains("/comms/socket.io", System.StringComparison.OrdinalIgnoreCase))

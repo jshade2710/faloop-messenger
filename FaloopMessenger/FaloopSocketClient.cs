@@ -45,8 +45,14 @@ public class FaloopSocketClient : IDisposable
     private readonly Configuration   _config;
     private readonly List<SpawnInfo> _spawns = new();
     private readonly object          _lock   = new();
+    private readonly object          _lifecycle = new();
     private          CancellationTokenSource _cts = new();
+    private          Task?  _loopTask;
     private          string? _sessionId;
+
+    // Set on every received frame; the liveness watchdog aborts the socket if
+    // this goes stale (a half-open TCP connection never throws on its own).
+    private volatile int _lastRxTick;
 
     public FaloopSocketClient(Configuration config) => _config = config;
 
@@ -67,10 +73,12 @@ public class FaloopSocketClient : IDisposable
 
     public void Connect()
     {
-        if (State is ConnectionState.Connecting or ConnectionState.Connected) return;
-        _cts.Cancel();
-        _cts = new CancellationTokenSource();
-        _ = ConnectLoop(_cts.Token);
+        lock (_lifecycle)
+        {
+            if (State is ConnectionState.Connecting or ConnectionState.Connected) return;
+            _cts      = new CancellationTokenSource();
+            _loopTask = ConnectLoop(_cts.Token);
+        }
     }
 
     public void Disconnect()
@@ -79,11 +87,30 @@ public class FaloopSocketClient : IDisposable
         SetState(ConnectionState.Disconnected);
     }
 
-    public void Reconnect()
+    // Fully tears the old loop down (awaiting its exit and disposing its CTS)
+    // before starting a fresh one — so two ConnectLoops can never run
+    // concurrently and the CancellationTokenSource isn't leaked per reconnect.
+    public void Reconnect() => _ = RestartAsync();
+
+    private async Task RestartAsync()
     {
-        Disconnect();
-        _cts = new CancellationTokenSource();
-        _ = ConnectLoop(_cts.Token);
+        CancellationTokenSource old;
+        Task?                   oldTask;
+        lock (_lifecycle) { old = _cts; oldTask = _loopTask; }
+
+        old.Cancel();
+        if (oldTask != null)
+        {
+            try { await oldTask.ConfigureAwait(false); }
+            catch { /* loop exits via cancellation — expected */ }
+        }
+        old.Dispose();
+
+        lock (_lifecycle)
+        {
+            _cts      = new CancellationTokenSource();
+            _loopTask = ConnectLoop(_cts.Token);
+        }
     }
 
     // ── Connection loop ───────────────────────────────────────────────
@@ -101,24 +128,36 @@ public class FaloopSocketClient : IDisposable
         while (!ct.IsCancellationRequested)
         {
             SetState(ConnectionState.Connecting);
-            var connectedOnce = false;
+            var connectedAt = DateTime.MinValue;
             try
             {
+                // T-2: never send the session id over a non-TLS socket. The
+                // URL is a free-text Advanced setting; a ws:// value would leak
+                // it. This is a hard stop (no retry) — the user must fix the
+                // setting and hit Reconnect; spinning wouldn't help.
+                var wsUrl = _config.SocketUrl;
+                if (!Uri.TryCreate(wsUrl, UriKind.Absolute, out var wsUri) ||
+                    wsUri.Scheme != "wss")
+                {
+                    Plugin.Log.Error(
+                        $"[Faloop] Refusing non-wss socket URL '{wsUrl}'. " +
+                        "Fix it in Settings → Advanced, then Reconnect.");
+                    LastError = "Socket URL must be wss://";
+                    SetState(ConnectionState.Disconnected);
+                    break;
+                }
+
                 _sessionId = await FetchAnonSession(ct);
 
-                var wsUrl = _config.SocketUrl;
                 Plugin.Log.Information($"[Faloop] Connecting to {wsUrl}");
 
                 using var ws = new ClientWebSocket();
                 ws.Options.SetRequestHeader("Origin",     FaloopOrigin);
                 ws.Options.SetRequestHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0");
 
-                await ws.ConnectAsync(new Uri(wsUrl), ct);
+                await ws.ConnectAsync(wsUri, ct);
 
-                // Successful WebSocket open — reset backoff and start the
-                // periodic time-sync background task if not already running.
-                consecutiveFailures = 0;
-                connectedOnce       = true;
+                connectedAt = DateTime.UtcNow;
                 timeSyncTask ??= TimeSyncLoop(timeSyncCts.Token);
 
                 await RunSession(ws, ct);
@@ -133,7 +172,15 @@ public class FaloopSocketClient : IDisposable
 
             if (ct.IsCancellationRequested) break;
 
-            if (!connectedOnce) consecutiveFailures++;
+            // C-2: only a *sustained* connection resets the backoff. A socket
+            // that opens then drops immediately (auth kick, server close,
+            // rate-limit) must still back off — otherwise we'd re-hit the
+            // auth endpoints every 5s and get ourselves throttled/banned.
+            var sustained = connectedAt != DateTime.MinValue &&
+                            DateTime.UtcNow - connectedAt > TimeSpan.FromSeconds(30);
+            if (sustained) consecutiveFailures = 0;
+            else           consecutiveFailures++;
+
             var delaySec = Math.Min(120, 5 * (int)Math.Pow(2, Math.Min(consecutiveFailures, 5)));
             if (consecutiveFailures > 1)
                 Plugin.Log.Information($"[Faloop] Reconnect attempt #{consecutiveFailures + 1} in {delaySec}s");
@@ -174,6 +221,11 @@ public class FaloopSocketClient : IDisposable
     // events, so logging in is recommended.
     private async Task<string?> FetchAnonSession(CancellationToken ct)
     {
+        // Snapshot credentials once so a concurrent Configuration.Save()
+        // (which seals the password) can't make the two reads below disagree.
+        var cfgUser = _config.Username;
+        var cfgPass = _config.Password;
+
         try
         {
             using var http = MakeBrowserHttpClient(FaloopBase);
@@ -208,7 +260,7 @@ public class FaloopSocketClient : IDisposable
             var token       = rData.GetProperty("token").GetString();
 
             // No credentials → return anonymous session (may not receive events)
-            if (string.IsNullOrWhiteSpace(_config.Username) || string.IsNullOrWhiteSpace(_config.Password))
+            if (string.IsNullOrWhiteSpace(cfgUser) || string.IsNullOrWhiteSpace(cfgPass))
             {
                 Plugin.Log.Information("[Faloop] Using anonymous session (no credentials set).");
                 CacheSession(anonSession);
@@ -223,8 +275,8 @@ public class FaloopSocketClient : IDisposable
 
             var loginPayload = JsonSerializer.Serialize(new
             {
-                username   = _config.Username,
-                password   = _config.Password,
+                username   = cfgUser,
+                password   = cfgPass,
                 rememberMe = false,
                 sessionId  = anonSession,
             });
@@ -286,28 +338,69 @@ public class FaloopSocketClient : IDisposable
     private async Task RunSession(ClientWebSocket ws, CancellationToken ct)
     {
         var buf = new byte[65_536];
-        var sb  = new StringBuilder(512);
+        using var ms = new System.IO.MemoryStream(65_536);
 
-        while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
+        _lastRxTick = Environment.TickCount;
+
+        // C-1: liveness watchdog. A half-open TCP connection (NAT idle, Wi-Fi
+        // drop, sleep/resume) never delivers FIN/RST, so ReceiveAsync would
+        // block forever and the listener would die silently. Faloop's
+        // Engine.IO pingInterval is ~25s; treat >60s of total silence as dead
+        // and Abort() the socket — that makes the pending ReceiveAsync throw,
+        // which ConnectLoop catches and turns into a backed-off reconnect.
+        using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var watchdog = Task.Run(async () =>
         {
-            sb.Clear();
-            WebSocketReceiveResult result;
-
-            do
+            try
             {
-                result = await ws.ReceiveAsync(new ArraySegment<byte>(buf), ct);
-
-                if (result.MessageType == WebSocketMessageType.Close)
+                while (!idleCts.IsCancellationRequested)
                 {
-                    SetState(ConnectionState.Disconnected);
-                    return;
+                    await Task.Delay(5000, idleCts.Token);
+                    if (Environment.TickCount - _lastRxTick > 60_000)
+                    {
+                        Plugin.Log.Warning("[Faloop] No frames for 60s — aborting dead socket.");
+                        try { ws.Abort(); } catch { /* forces ReceiveAsync to throw */ }
+                        return;
+                    }
                 }
-
-                sb.Append(Encoding.UTF8.GetString(buf, 0, result.Count));
             }
-            while (!result.EndOfMessage);
+            catch (OperationCanceledException) { /* normal shutdown */ }
+        }, idleCts.Token);
 
-            await HandlePacket(sb.ToString(), ws, ct);
+        try
+        {
+            while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
+            {
+                ms.SetLength(0);
+                WebSocketReceiveResult result;
+
+                do
+                {
+                    result = await ws.ReceiveAsync(new ArraySegment<byte>(buf), ct);
+                    _lastRxTick = Environment.TickCount;
+
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        SetState(ConnectionState.Disconnected);
+                        return;
+                    }
+
+                    // S-3: accumulate raw bytes and decode ONCE at end-of-
+                    // message. Decoding each fragment independently splits any
+                    // multibyte UTF-8 sequence straddling a 64 KB boundary
+                    // (JP reporter/mob names, the '·' separator) into mojibake.
+                    ms.Write(buf, 0, result.Count);
+                }
+                while (!result.EndOfMessage);
+
+                var text = Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
+                await HandlePacket(text, ws, ct);
+            }
+        }
+        finally
+        {
+            idleCts.Cancel();
+            try { await watchdog.ConfigureAwait(false); } catch { /* ignore */ }
         }
     }
 
@@ -317,7 +410,8 @@ public class FaloopSocketClient : IDisposable
     {
         if (packet.Length == 0) return;
 
-        Plugin.Log.Verbose($"[Faloop] << {packet[..Math.Min(300, packet.Length)]}");
+        if (Plugin.Log.MinimumLogLevel <= Serilog.Events.LogEventLevel.Verbose)
+            Plugin.Log.Verbose($"[Faloop] << {packet[..Math.Min(300, packet.Length)]}");
 
         switch (packet)
         {
@@ -412,7 +506,12 @@ public class FaloopSocketClient : IDisposable
             var worldSlug = GetString(ids, "worldId") ?? string.Empty;
             var zoneInst  = ids.TryGetProperty("zoneInstance", out var zi) ? zi.GetInt32() : 0;
 
-            Plugin.Log.Debug($"[Faloop] message action={action} mob={mobSlug} world={worldSlug}");
+            // M-2: this is the global firehose (every world/DC). Build the log
+            // string only when Debug is actually enabled — otherwise it's
+            // hundreds of throwaway allocations/sec on the receive thread
+            // during a spike, for nothing.
+            if (Plugin.Log.MinimumLogLevel <= Serilog.Events.LogEventLevel.Debug)
+                Plugin.Log.Debug($"[Faloop] message action={action} mob={mobSlug} world={worldSlug}");
 
             switch (action)
             {
@@ -558,14 +657,35 @@ public class FaloopSocketClient : IDisposable
             RawEvent     = mobData.GetRawText(),
         };
 
+        // S-2: Faloop legitimately re-emits `spawn` for the same mark, and a
+        // reconnect can replay recent events. Without an identity key that
+        // produced duplicate, un-killable cards (death/location only patch the
+        // first match). Upsert on (mob, world, instance) while still alive, and
+        // only fire the new-spawn alert for a genuinely new entry.
+        bool isNew;
         lock (_lock)
         {
-            _spawns.Insert(0, spawn);
-            while (_spawns.Count > _config.MaxEntries)
-                _spawns.RemoveAt(_spawns.Count - 1);
+            var idx = _spawns.FindIndex(s =>
+                !s.IsDead &&
+                string.Equals(s.MobName, mobName, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(s.World,   worldName, StringComparison.OrdinalIgnoreCase) &&
+                s.ZoneInstance == zoneInst);
+
+            if (idx >= 0)
+            {
+                _spawns[idx] = spawn;   // refresh in place
+                isNew = false;
+            }
+            else
+            {
+                _spawns.Insert(0, spawn);
+                while (_spawns.Count > _config.MaxEntries)
+                    _spawns.RemoveAt(_spawns.Count - 1);
+                isNew = true;
+            }
         }
 
-        OnNewSpawn?.Invoke(spawn);
+        if (isNew) OnNewSpawn?.Invoke(spawn);   // don't re-alert on a refresh
         OnUpdate?.Invoke();
     }
 
@@ -589,23 +709,31 @@ public class FaloopSocketClient : IDisposable
         if (string.IsNullOrEmpty(locationStr)) return;
 
         SpawnInfo? target;
+        uint       targetTerritory;
         lock (_lock)
         {
             target = _spawns.Find(s =>
                 string.Equals(s.MobName, mobName, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(s.World, worldName, StringComparison.OrdinalIgnoreCase) &&
                 s.ZoneInstance == zoneInst);
+            targetTerritory = target?.TerritoryId ?? 0;
         }
         if (target == null) return;
 
-        var coords = ResolveCoords(target.TerritoryId, locationStr);
+        var coords = ResolveCoords(targetTerritory, locationStr);
         if (coords == null) return;
 
-        target.X    = coords.Value.x;
-        target.Y    = coords.Value.y;
-        target.RawX = coords.Value.rawX;
-        target.RawY = coords.Value.rawY;
-        Plugin.Log.Debug($"[Faloop] Updated location for {mobName} on {worldName}: ({target.X:F1}, {target.Y:F1})");
+        // M-1: mutate the shared SpawnInfo under the same lock that guards the
+        // list — the render thread reads these fields off GetSnapshot()'s
+        // shared references, so an unsynchronised write is a data race.
+        lock (_lock)
+        {
+            target.X    = coords.Value.x;
+            target.Y    = coords.Value.y;
+            target.RawX = coords.Value.rawX;
+            target.RawY = coords.Value.rawY;
+        }
+        Plugin.Log.Debug($"[Faloop] Updated location for {mobName} on {worldName}: ({coords.Value.x:F1}, {coords.Value.y:F1})");
 
         OnUpdate?.Invoke();
     }
@@ -743,6 +871,10 @@ public class FaloopSocketClient : IDisposable
     public void Dispose()
     {
         _cts.Cancel();
+        // Give the loop a moment to unwind on unload; it exits promptly on
+        // cancellation (ReceiveAsync throws, Task.Delay cancels).
+        try { _loopTask?.Wait(TimeSpan.FromSeconds(2)); }
+        catch { /* AggregateException(OperationCanceled) — expected */ }
         _cts.Dispose();
     }
 }
