@@ -27,20 +27,28 @@ jobs:
           $path = 'pluginmaster.json'
           if (-not (Test-Path $path)) { Write-Error "$path is missing"; exit 1 }
 
+          $raw = Get-Content $path -Raw
+
+          # Authoritative array check: assert the JSON *literal* is a top-level
+          # array, the way Dalamud actually parses it. (PowerShell's
+          # ConvertFrom-Json collapses a single-element array to a bare object
+          # on the pipeline, so a type check on the parsed value is unreliable —
+          # that's the very gotcha this guard exists to catch.)
+          if ($raw.TrimStart()[0] -ne '[') {
+            Write-Error "pluginmaster.json must be a JSON ARRAY (literal must start with '[')"
+            exit 1
+          }
+
           try {
-            $json = Get-Content $path -Raw | ConvertFrom-Json
+            # -NoEnumerate keeps a single-element array as an array.
+            $json = $raw | ConvertFrom-Json -NoEnumerate
           } catch {
             Write-Error "pluginmaster.json is not valid JSON: $_"
             exit 1
           }
 
-          # MUST be an array. ConvertFrom-Json yields object[] for a JSON array;
-          # a bare object (the bug we hit) is a single PSCustomObject instead.
-          if ($json -isnot [System.Array]) {
-            Write-Error "pluginmaster.json must be a JSON ARRAY, got $($json.GetType().Name)"
-            exit 1
-          }
-          if ($json.Count -lt 1) {
+          $arr = @($json)
+          if ($arr.Count -lt 1) {
             Write-Error "pluginmaster.json array is empty"
             exit 1
           }
@@ -51,7 +59,7 @@ jobs:
           )
 
           $i = 0
-          foreach ($entry in $json) {
+          foreach ($entry in $arr) {
             foreach ($key in $required) {
               $val = $entry.$key
               if ($null -eq $val -or "$val".Trim() -eq '') {
@@ -67,4 +75,4 @@ jobs:
             $i++
           }
 
-          Write-Host "pluginmaster.json OK — array of $($json.Count) entry(s), all required keys present."
+          Write-Host "pluginmaster.json OK — array of $($arr.Count) entry(s), all required keys present."
