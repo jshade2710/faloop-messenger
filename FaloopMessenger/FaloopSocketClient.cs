@@ -630,8 +630,8 @@ public class FaloopSocketClient : IDisposable
 
         var zoneName = (territoryId > 0 ? LookupZoneName(territoryId) : null) ?? zoneSlug;
         // Lumina's BNpcName is sentence-cased (e.g. "the Pale Rider"). Normalise
-        // to lowercase so the card / chat output is visually consistent.
-        var mobName  = (LookupMobName(mobInfo.BNpcId) ?? mobSlug).ToLowerInvariant();
+        // to proper Title Case ("The Pale Rider") for clean card/chat output.
+        var mobName  = ToTitleCase(LookupMobName(mobInfo.BNpcId) ?? mobSlug);
 
         // Use Faloop's reported timestamp (ISO 8601 in UTC) so "Age" reflects
         // actual time-since-spawn, not time-since-we-saw-the-event.
@@ -846,6 +846,13 @@ public class FaloopSocketClient : IDisposable
     }
 
     // ── JSON helpers ──────────────────────────────────────────────────
+
+    // "the Pale Rider" / "HELLSCLAW" → "The Pale Rider" / "Hellsclaw".
+    private static string ToTitleCase(string s) =>
+        string.IsNullOrEmpty(s)
+            ? s
+            : System.Globalization.CultureInfo.InvariantCulture.TextInfo
+                .ToTitleCase(s.ToLowerInvariant());
 
     private static string? GetString(JsonElement e, string key) =>
         e.TryGetProperty(key, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
