@@ -599,10 +599,12 @@ internal static class SpawnCardRenderer
         if (isTeleporting || !canAct) ImGui.EndDisabled();
         x += CmpButtonW + CmpBtnGap;
 
+        // Compact has no map thumbnail to click, so Flag lives here (in place
+        // of Ping) — placing the flag is the more useful one-tap action.
         if (!canAct) ImGui.BeginDisabled();
-        DrawNeutralButton("Ping", $"##ping_{spawnKey}",
+        DrawNeutralButton("Flag", $"##flag_{spawnKey}",
             new Vector2(x, y0), new Vector2(CmpButtonW, CmpBtnH),
-            () => TeleportRoutine.Ping(spawn));
+            () => TeleportRoutine.SetFlag(spawn));
         if (!canAct) ImGui.EndDisabled();
         x += CmpButtonW + CmpBtnGap;
         DrawNeutralButton("PF", $"##pf_{spawnKey}",
