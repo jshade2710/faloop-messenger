@@ -39,6 +39,7 @@ public sealed class Plugin : IDalamudPlugin
 
     // Game fonts for nicer card typography. Static so windows/widgets can use
     // them without juggling a Plugin reference.
+    internal static IFontHandle FontWorld  { get; private set; } = null!;   // ~28px AXIS (card title)
     internal static IFontHandle FontTitle  { get; private set; } = null!;   // ~22px AXIS
     internal static IFontHandle FontMedium { get; private set; } = null!;   // ~16px AXIS
 
@@ -75,6 +76,7 @@ public sealed class Plugin : IDalamudPlugin
 
         // Build game-font handles. NewGameFontHandle is non-blocking — the first
         // few frames may render in the default font until the atlas is rebuilt.
+        FontWorld  = PluginInterface.UiBuilder.FontAtlas.NewGameFontHandle(new GameFontStyle(GameFontFamily.Axis, 28f));
         FontTitle  = PluginInterface.UiBuilder.FontAtlas.NewGameFontHandle(new GameFontStyle(GameFontFamily.Axis, 22f));
         FontMedium = PluginInterface.UiBuilder.FontAtlas.NewGameFontHandle(new GameFontStyle(GameFontFamily.Axis, 16f));
 
@@ -146,6 +148,7 @@ public sealed class Plugin : IDalamudPlugin
         Client.OnUpdate   -= HandleSpawnsChanged;
         Client.Dispose();
 
+        FontWorld.Dispose();
         FontTitle.Dispose();
         FontMedium.Dispose();
     }

@@ -20,17 +20,16 @@ internal static class SpawnCardRenderer
     // ── Layout constants ──────────────────────────────────────────────
     // Redesigned card: world is the title, the pull timer gets a dedicated
     // right-side panel, actions sit on their own bottom row with one primary.
-    private const float StdCardHeight   = 150f;
-    private const float StdCardPad      = 12f;
+    private const float StdCardHeight   = 120f;
+    private const float StdCardPad      = 10f;
     private const float StdStripeWidth  = 4f;
-    private const float StdBadgeRadius  = 18f;
-    private const float StdThumbSize    = 78f;
-    private const float StdPullW        = 148f;
-    private const float StdPullH        = 56f;
-    private const float StdPrimaryW     = 104f;
-    private const float StdSecondaryW   = 58f;
-    private const float StdBtnH         = 26f;
-    private const float StdBtnGap       = 6f;
+    private const float StdBadgeRadius  = 23f;
+    private const float StdThumbSize    = 76f;
+    private const float StdPullW        = 132f;
+    private const float StdPullH        = 52f;
+    private const float StdBtnW         = 86f;
+    private const float StdBtnH         = 22f;
+    private const float StdBtnGap       = 5f;
 
     private const float CmpCardHeight   = 70f;
     private const float CmpCardPad      = 7f;
@@ -118,41 +117,49 @@ internal static class SpawnCardRenderer
                 return;
             }
 
-            // Rank stays as accent identity ONLY (stripe + badge). Everything
-            // else uses neutral/semantic colour so the accent isn't diluted.
+            // Rank = accent identity ONLY (stripe + badge), vertically centred
+            // and enlarged so "S" reads at a glance.
             var badgeCenter = new Vector2(
-                origin.X + StdStripeWidth + 10f + StdBadgeRadius,
-                origin.Y + 40f);
+                origin.X + StdStripeWidth + 11f + StdBadgeRadius,
+                origin.Y + StdCardHeight / 2f);
             DrawRankBadge(badgeCenter, StdBadgeRadius, spawn.Rank, rankU32, fresh, dl, useTitleFont: true);
 
-            // ── Right cluster: PULL panel + thumbnail ──────────────────
-            var pull   = PullState(spawn);
-            var pullX  = origin.X + width - StdCardPad - StdPullW;
-            var pullY  = origin.Y + StdCardPad;
-            var hasPull = pull.Enabled;
-            if (hasPull)
-                DrawPullPanel(dl, new Vector2(pullX, pullY), pull);
+            // ── Right cluster (right→left): buttons · pull · thumbnail ─
+            var pull = PullState(spawn);
 
-            var thumbRightEdge = hasPull ? pullX - 12f : origin.X + width - StdCardPad;
-            var thumbX = thumbRightEdge - StdThumbSize;
-            var thumbY = origin.Y + StdCardPad;
+            var btnTotalH = StdBtnH * 4f + StdBtnGap * 3f;
+            var btnX      = origin.X + width - 8f - StdBtnW;
+            var btnY0     = origin.Y + (StdCardHeight - btnTotalH) / 2f;
+            DrawActionButtonsStacked(spawn, btnX, btnY0, StdBtnW, StdBtnH, StdBtnGap, spawnKey);
+
+            var rightEdge = btnX - 10f;
+            if (pull.Enabled)
+            {
+                var pullPos = new Vector2(rightEdge - StdPullW,
+                                          origin.Y + (StdCardHeight - StdPullH) / 2f);
+                DrawPullPanel(dl, pullPos, pull);
+                rightEdge = pullPos.X - 10f;
+            }
+
+            var thumbX = rightEdge - StdThumbSize;
+            var thumbY = origin.Y + (StdCardHeight - StdThumbSize) / 2f;
             DrawMapThumb(spawn, new Vector2(thumbX, thumbY), StdThumbSize);
 
             // ── Text block (fixed rows → columns align down a list) ────
-            var textX     = origin.X + StdStripeWidth + 12f + StdBadgeRadius * 2f + 18f;
-            var textRight = thumbX - 14f;
+            var textX     = origin.X + StdStripeWidth + 13f + StdBadgeRadius * 2f + 16f;
+            var textRight = thumbX - 12f;
             var y         = origin.Y + StdCardPad;
 
-            // Row 1 — WORLD (the title) + instance badge
-            using (Plugin.FontTitle.Push())
+            // Row 1 — WORLD (the title), enlarged + instance badge
+            using (Plugin.FontWorld.Push())
             {
                 dl.AddText(new Vector2(textX, y),
                     ImGui.GetColorU32(Theme.TextPrimary), spawn.World);
                 var ww = ImGui.CalcTextSize(spawn.World).X;
                 if (spawn.ZoneInstance > 0)
                     DrawInstanceBadge(dl,
-                        new Vector2(textX + ww + 10f, y + 2f), spawn.ZoneInstance);
-                y += ImGui.GetTextLineHeight() + 2f;
+                        new Vector2(textX + ww + 10f, y + 6f), spawn.ZoneInstance);
+                y += ImGui.GetTextLineHeight() + 1f;
             }
 
             // Row 2 — mob name (secondary)
@@ -160,7 +167,7 @@ internal static class SpawnCardRenderer
             {
                 dl.AddText(new Vector2(textX, y),
                     ImGui.GetColorU32(Theme.TextSecondary), spawn.MobName);
-                y += ImGui.GetTextLineHeight() + 5f;
+                y += ImGui.GetTextLineHeight() + 4f;
             }
 
             // Row 3 — meta strip: zone · ●age · coords · by reporter
@@ -168,10 +175,6 @@ internal static class SpawnCardRenderer
 
             // Row 4 — route hint (fixed slot; blank if none, never reflows)
             DrawRouteHint(spawn, new Vector2(textX, y), dl);
-
-            // ── Bottom action row: one primary + neutral secondaries ───
-            var btnY = origin.Y + StdCardHeight - StdCardPad - StdBtnH;
-            DrawActionButtons(spawn, textX, btnY, spawnKey);
         }
 
         ImGui.SetCursorScreenPos(origin + new Vector2(0f, StdCardHeight + 6f));
@@ -387,66 +390,72 @@ internal static class SpawnCardRenderer
         };
     }
 
-    // Big, glanceable pull panel — the single most time-critical element, so
-    // it gets its own framed block with a non-colour state cue (outlined while
-    // counting down + draining bar → solid filled pill at PULL).
+    // Glanceable pull panel: a single framed block. Dark surface; the border
+    // and the timer text carry the state colour (amber → green). No fill, no
+    // progress bar, no "GO" — the colour shift + the word PULL is the cue and
+    // the two lines are vertically centred as a block.
     private static void DrawPullPanel(ImDrawListPtr dl, Vector2 pos, PullInfo p)
     {
-        var max = pos + new Vector2(StdPullW, StdPullH);
+        var size  = new Vector2(StdPullW, StdPullH);
+        var accent = p.Ready ? Theme.PullReady : Theme.PullWait;
+
+        dl.AddRectFilled(pos, pos + size, ImGui.GetColorU32(Theme.PullPanelBg), 6f);
+        dl.AddRect(pos, pos + size, ImGui.GetColorU32(accent), 6f, 0, 1.7f);
+
+        var cx = pos.X + size.X / 2f;
 
         if (p.Ready)
         {
-            dl.AddRectFilled(pos, max, ImGui.GetColorU32(Theme.PullReady), 6f);
-            CenterText(dl, Plugin.FontTitle, "PULL",
-                new Vector2((pos.X + max.X) / 2f, pos.Y + 19f), Theme.PullPanelBg);
-            CenterText(dl, Plugin.FontMedium, "go!",
-                new Vector2((pos.X + max.X) / 2f, pos.Y + 40f), Theme.PullPanelBg);
+            CenterBlock(dl, cx, pos.Y, size.Y,
+                (Plugin.FontTitle, "PULL", accent));
             return;
         }
 
-        dl.AddRectFilled(pos, max, ImGui.GetColorU32(Theme.PullPanelBg), 6f);
-        dl.AddRect(pos, max, ImGui.GetColorU32(Theme.PullWait), 6f, 0, 1.6f);
-        CenterText(dl, Plugin.FontTitle, p.Big,
-            new Vector2((pos.X + max.X) / 2f, pos.Y + 16f), Theme.PullWait);
-        CenterText(dl, Plugin.FontMedium, p.Sub,
-            new Vector2((pos.X + max.X) / 2f, pos.Y + 37f), Theme.TextTertiary);
-
-        // Draining progress bar (shape cue, colour-blind safe).
-        var barY = max.Y - 6f;
-        var trackA = new Vector2(pos.X + 8f, barY);
-        var trackB = new Vector2(max.X - 8f, barY + 2.5f);
-        dl.AddRectFilled(trackA, trackB, ImGui.GetColorU32(Theme.PullPanelBorder), 1.5f);
-        var fillB = new Vector2(trackA.X + (trackB.X - trackA.X) * p.Frac, trackB.Y);
-        dl.AddRectFilled(trackA, fillB, ImGui.GetColorU32(Theme.PullWait), 1.5f);
+        // Big timer (state colour) + dim-amber ET sub so the text itself
+        // carries colour now that the bar is gone.
+        var sub = new Vector4(accent.X, accent.Y, accent.Z, 0.62f);
+        CenterBlock(dl, cx, pos.Y, size.Y,
+            (Plugin.FontTitle,  p.Big, accent),
+            (Plugin.FontMedium, p.Sub, sub));
     }
 
     private static void DrawPullPanelCompact(ImDrawListPtr dl, Vector2 pos, Vector2 size, PullInfo p)
     {
-        var max = pos + size;
-        var mid = new Vector2((pos.X + max.X) / 2f, pos.Y + size.Y / 2f - 9f);
-        if (p.Ready)
+        var accent = p.Ready ? Theme.PullReady : Theme.PullWait;
+        dl.AddRectFilled(pos, pos + size, ImGui.GetColorU32(Theme.PullPanelBg), 5f);
+        dl.AddRect(pos, pos + size, ImGui.GetColorU32(accent), 5f, 0, 1.4f);
+        CenterBlock(dl, pos.X + size.X / 2f, pos.Y, size.Y,
+            (Plugin.FontMedium, p.Ready ? "PULL" : p.Big, accent));
+    }
+
+    // Vertically + horizontally centre a stack of (font, text, colour) lines
+    // within a box of the given height, anchored at cx / boxTopY.
+    private static void CenterBlock(ImDrawListPtr dl, float cx, float boxTopY, float boxH,
+        params (Dalamud.Interface.ManagedFontAtlas.IFontHandle font, string text, Vector4 col)[] lines)
+    {
+        const float gap = 1f;
+        var heights = new float[lines.Length];
+        var total   = 0f;
+        for (var i = 0; i < lines.Length; i++)
         {
-            dl.AddRectFilled(pos, max, ImGui.GetColorU32(Theme.PullReady), 5f);
-            CenterText(dl, Plugin.FontMedium, "PULL", mid, Theme.PullPanelBg);
+            using (lines[i].font.Push())
+                heights[i] = ImGui.GetTextLineHeight();
+            total += heights[i];
+            if (i > 0) total += gap;
         }
-        else
+
+        var y = boxTopY + (boxH - total) / 2f;
+        foreach (var (font, text, col) in lines)
         {
-            dl.AddRectFilled(pos, max, ImGui.GetColorU32(Theme.PullPanelBg), 5f);
-            dl.AddRect(pos, max, ImGui.GetColorU32(Theme.PullWait), 5f, 0, 1.4f);
-            CenterText(dl, Plugin.FontMedium, p.Big, mid, Theme.PullWait);
+            using (font.Push())
+            {
+                var ts = ImGui.CalcTextSize(text);
+                dl.AddText(new Vector2(cx - ts.X / 2f, y), ImGui.GetColorU32(col), text);
+                y += ImGui.GetTextLineHeight() + gap;
+            }
         }
     }
 
-    // Draw text horizontally centred on cx, with its top at topY.
-    private static void CenterText(ImDrawListPtr dl, Dalamud.Interface.ManagedFontAtlas.IFontHandle font,
-                                   string text, Vector2 cxTop, Vector4 col)
-    {
-        using (font.Push())
-        {
-            var ts = ImGui.CalcTextSize(text);
-            dl.AddText(new Vector2(cxTop.X - ts.X / 2f, cxTop.Y), ImGui.GetColorU32(col), text);
-        }
-    }
 
     // ── Meta strip ────────────────────────────────────────────────────
 
@@ -512,37 +521,34 @@ internal static class SpawnCardRenderer
 
     // ── Action buttons ────────────────────────────────────────────────
 
-    // One accent PRIMARY (Teleport) + neutral secondaries, so the eye isn't
-    // asked to re-read three identical gold chips every glance.
-    private static void DrawActionButtons(SpawnInfo spawn, float x0, float y0, long spawnKey)
+    // One accent PRIMARY (Teleport) on top + neutral secondaries stacked below
+    // — keeps the card short (no extra button row) while still giving the eye
+    // a single primary instead of a wall of identical gold chips.
+    private static void DrawActionButtonsStacked(SpawnInfo spawn, float x0, float y0,
+                                                 float btnW, float btnH, float gap, long spawnKey)
     {
         var canAct        = spawn.TerritoryId > 0;
         var isTeleporting = TeleportRoutine.InProgress.Contains(spawnKey);
-        var x = x0;
+        var sz = new Vector2(btnW, btnH);
+        var y  = y0;
 
-        // Primary — Teleport
         if (isTeleporting || !canAct) ImGui.BeginDisabled();
-        DrawPrimaryButton(
-            isTeleporting ? "Teleporting…" : "Teleport",
-            $"##tp_{spawnKey}", new Vector2(x, y0), new Vector2(StdPrimaryW, StdBtnH),
+        DrawPrimaryButton(isTeleporting ? "Teleporting…" : "Teleport",
+            $"##tp_{spawnKey}", new Vector2(x0, y), sz,
             () => TeleportRoutine.Teleport(spawn));
         if (isTeleporting || !canAct) ImGui.EndDisabled();
-        x += StdPrimaryW + StdBtnGap;
+        y += btnH + gap;
 
-        // Secondaries — Flag / Ping / Party
         if (!canAct) ImGui.BeginDisabled();
         DrawNeutralButton("Flag", $"##flag_{spawnKey}",
-            new Vector2(x, y0), new Vector2(StdSecondaryW, StdBtnH),
-            () => TeleportRoutine.SetFlag(spawn));
-        x += StdSecondaryW + StdBtnGap;
+            new Vector2(x0, y), sz, () => TeleportRoutine.SetFlag(spawn));
+        y += btnH + gap;
         DrawNeutralButton("Ping", $"##ping_{spawnKey}",
-            new Vector2(x, y0), new Vector2(StdSecondaryW, StdBtnH),
-            () => TeleportRoutine.Ping(spawn));
+            new Vector2(x0, y), sz, () => TeleportRoutine.Ping(spawn));
         if (!canAct) ImGui.EndDisabled();
-        x += StdSecondaryW + StdBtnGap;
+        y += btnH + gap;
         DrawNeutralButton("PF", $"##pf_{spawnKey}",
-            new Vector2(x, y0), new Vector2(StdSecondaryW, StdBtnH),
-            TeleportRoutine.OpenPartyFinder);
+            new Vector2(x0, y), sz, TeleportRoutine.OpenPartyFinder);
     }
 
     private static void DrawActionButtonsCompact(SpawnInfo spawn, float x0, float y0, long spawnKey)
