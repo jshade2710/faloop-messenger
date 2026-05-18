@@ -236,7 +236,7 @@ internal static class SpawnCardRenderer
             // timer chip on the right, then the buttons.
             var pull   = PullState(spawn);
             var btnW   = CmpButtonW * 3 + CmpBtnGap * 2;
-            var chipW  = pull.Enabled ? 62f : 0f;
+            var chipW  = pull.Enabled ? 78f : 0f;   // fits "ET HH:MM"
             var chipX  = origin.X + width - 8f - chipW;
             var btnX0  = chipX - (pull.Enabled ? 10f : 0f) - btnW;
 
@@ -411,11 +411,11 @@ internal static class SpawnCardRenderer
 
     private readonly struct PullInfo
     {
-        public bool   Enabled { get; init; }
-        public bool   Ready   { get; init; }
-        public string Big     { get; init; }   // "1:23" or "PULL"
-        public string Sub     { get; init; }   // "~07:30 ET" or "go!"
-        public float  Frac    { get; init; }   // 1→0 drain (countdown remaining)
+        public bool   Enabled  { get; init; }
+        public bool   Ready    { get; init; }
+        public string Et       { get; init; }   // Eorzean clock "HH:MM" the pull is due
+        public string Countdown{ get; init; }   // real-time "m:ss" (tooltip)
+        public float  Frac     { get; init; }   // 1→0 drain (countdown remaining)
     }
 
     private static PullInfo PullState(SpawnInfo spawn)
@@ -427,24 +427,22 @@ internal static class SpawnCardRenderer
         var remaining = total - (TimeSync.ServerNow - spawn.ReportedAt);
 
         if (remaining <= TimeSpan.Zero)
-            return new PullInfo { Enabled = true, Ready = true, Big = "PULL", Sub = "now", Frac = 0f };
+            return new PullInfo { Enabled = true, Ready = true, Frac = 0f };
 
-        var et = EorzeaClock(DateTime.UtcNow + remaining);
         return new PullInfo
         {
-            Enabled = true,
-            Ready   = false,
-            Big     = MmSs(remaining),
-            Sub     = $"~{et} ET",
-            Frac    = MathF.Min(1f, (float)(remaining.TotalSeconds / total.TotalSeconds)),
+            Enabled   = true,
+            Ready     = false,
+            Et        = EorzeaClock(DateTime.UtcNow + remaining),
+            Countdown = MmSs(remaining),
+            Frac      = MathF.Min(1f, (float)(remaining.TotalSeconds / total.TotalSeconds)),
         };
     }
 
     // Minimal timer chip — small, low-chrome, but noticeable via colour and a
-    // gentle pulse in the final stretch / when ready. Just the m:ss (FontMedium
-    // ≈ half the old panel's title); the ET time lives in the hover tooltip so
-    // the chip stays uncluttered. Click-through is harmless (invisible button
-    // only powers the tooltip).
+    // gentle pulse in the final stretch / when ready. Shows the Eorzean clock
+    // time the pull is due ("ET HH:MM"), since that's the value you watch the
+    // in-game clock for; the real-time m:ss countdown is in the hover tooltip.
     private static void DrawTimerChip(ImDrawListPtr dl, Vector2 pos, Vector2 size,
                                       PullInfo p, long spawnKey)
     {
@@ -475,7 +473,7 @@ internal static class SpawnCardRenderer
 
         using (Plugin.FontMedium.Push())
         {
-            var label = p.Ready ? "PULL" : p.Big;
+            var label = p.Ready ? "PULL" : $"ET {p.Et}";
             var ts    = ImGui.CalcTextSize(label);
             var tcol  = p.Ready
                 ? Theme.PullPanelBg
@@ -489,7 +487,7 @@ internal static class SpawnCardRenderer
             using (ImRaii.Tooltip())
                 ImGui.TextUnformatted(p.Ready
                     ? "Pull now"
-                    : $"Pull in {p.Big}  ·  {p.Sub}");
+                    : $"Pull in {p.Countdown}  ·  ET {p.Et}");
     }
 
 
