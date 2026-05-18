@@ -15,7 +15,13 @@ permissions:
   contents: write
 
 jobs:
+  # Fail-fast: never build or publish a release on top of a broken
+  # pluginmaster.json (reuses the standalone Validate workflow).
+  validate:
+    uses: ./.github/workflows/validate.yml
+
   build:
+    needs: validate
     runs-on: windows-latest
 
     steps:

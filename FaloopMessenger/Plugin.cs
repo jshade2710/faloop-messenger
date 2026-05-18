@@ -108,6 +108,11 @@ public sealed class Plugin : IDalamudPlugin
         Client.Connect();
         Log.Information("[Faloop] Messenger loaded.");
 
+        // Confirm the embedded data resource loaded with the expected
+        // magnitudes (cheap guard against a broken JSON edit).
+        try { Log.Information($"[Faloop] Data loaded: {FaloopData.IntegritySummary()}"); }
+        catch (System.Exception ex) { Log.Error(ex, "[Faloop] Embedded data failed to load"); }
+
         // One-shot: audit which Faloop zones can resolve an aetheryte. Findings
         // go to the Dalamud log so we know which territories need overrides.
         try { Windows.TeleportRoutine.AuditAetherytes(); }
@@ -217,7 +222,8 @@ public sealed class Plugin : IDalamudPlugin
     {
         try
         {
-            var prefix = $"{extraPrefix}[Hunt {spawn.Rank}] {spawn.MobName} on {spawn.World} ";
+            var inst   = spawn.ZoneInstance > 0 ? $" i{spawn.ZoneInstance}" : string.Empty;
+            var prefix = $"{extraPrefix}[Hunt {spawn.Rank}] {spawn.MobName} on {spawn.World}{inst} ";
             var coords = $" ({spawn.X:F1}, {spawn.Y:F1})";
 
             var builder = new SeStringBuilder().AddText(prefix);

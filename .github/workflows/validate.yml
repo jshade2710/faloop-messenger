@@ -1,0 +1,70 @@
+name: Validate
+
+# Guard rail: pluginmaster.json MUST stay a valid Dalamud custom-repo manifest
+# (a JSON ARRAY of plugin objects with the required keys). We shipped a bug
+# once where a JSON round-trip collapsed the single-element array into a bare
+# object and broke installs — this check makes that class of mistake
+# impossible to merge or release.
+
+on:
+  push:
+    branches: [main]
+    paths: ['pluginmaster.json']
+  pull_request:
+    paths: ['pluginmaster.json']
+  workflow_call:        # reused by release.yml as a fail-fast pre-flight
+
+jobs:
+  pluginmaster:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate pluginmaster.json
+        shell: pwsh
+        run: |
+          $path = 'pluginmaster.json'
+          if (-not (Test-Path $path)) { Write-Error "$path is missing"; exit 1 }
+
+          try {
+            $json = Get-Content $path -Raw | ConvertFrom-Json
+          } catch {
+            Write-Error "pluginmaster.json is not valid JSON: $_"
+            exit 1
+          }
+
+          # MUST be an array. ConvertFrom-Json yields object[] for a JSON array;
+          # a bare object (the bug we hit) is a single PSCustomObject instead.
+          if ($json -isnot [System.Array]) {
+            Write-Error "pluginmaster.json must be a JSON ARRAY, got $($json.GetType().Name)"
+            exit 1
+          }
+          if ($json.Count -lt 1) {
+            Write-Error "pluginmaster.json array is empty"
+            exit 1
+          }
+
+          $required = @(
+            'Author','Name','InternalName','AssemblyVersion','RepoUrl',
+            'IconUrl','DownloadLinkInstall','DownloadLinkTesting','DownloadLinkUpdate'
+          )
+
+          $i = 0
+          foreach ($entry in $json) {
+            foreach ($key in $required) {
+              $val = $entry.$key
+              if ($null -eq $val -or "$val".Trim() -eq '') {
+                Write-Error "Entry[$i] is missing or has an empty '$key'"
+                exit 1
+              }
+            }
+            # Version must be 4-part (Dalamud requires AssemblyVersion x.y.z.w).
+            if ($entry.AssemblyVersion -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+              Write-Error "Entry[$i] AssemblyVersion '$($entry.AssemblyVersion)' is not x.y.z.w"
+              exit 1
+            }
+            $i++
+          }
+
+          Write-Host "pluginmaster.json OK — array of $($json.Count) entry(s), all required keys present."

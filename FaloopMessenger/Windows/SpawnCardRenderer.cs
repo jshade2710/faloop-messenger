@@ -67,7 +67,7 @@ internal static class SpawnCardRenderer
 
         var killedAt = spawn.KilledAt ?? TimeSync.ServerNow;
         var age      = TimeSync.ServerNow - killedAt;
-        var parts    = new List<string> { spawn.MobName, spawn.World, spawn.ZoneName };
+        var parts    = new List<string> { spawn.MobName, spawn.World, ZoneLabel(spawn) };
         if (!string.IsNullOrEmpty(spawn.Reporter)) parts.Add($"reporter: {spawn.Reporter}");
         parts.Add($"killed {FormatAge(age)} ago");
         var text = string.Join("  ·  ", parts);
@@ -132,7 +132,7 @@ internal static class SpawnCardRenderer
             {
                 var (chipMax, _) = DrawWorldChip(spawn.World, new Vector2(textX, textY), dl);
                 dl.AddText(new Vector2(chipMax.X + 8f, textY + 2f),
-                    ImGui.GetColorU32(Theme.Subtle), spawn.ZoneName);
+                    ImGui.GetColorU32(Theme.Subtle), ZoneLabel(spawn));
                 textY = chipMax.Y + 4f;
             }
 
@@ -239,9 +239,11 @@ internal static class SpawnCardRenderer
                 textY = chipMax.Y + 4f;
             }
 
-            // Line 2: route hint (or zone fallback)
-            if (!DrawRouteHint(spawn, new Vector2(textX, textY), dl))
-                dl.AddText(new Vector2(textX, textY), ImGui.GetColorU32(Theme.Subtle), spawn.ZoneName);
+            // Line 2: route hint (or zone fallback). The compact card hides the
+            // zone behind the route hint, so the instance is appended to the
+            // hint here to keep it visible no matter which branch renders.
+            if (!DrawRouteHint(spawn, new Vector2(textX, textY), dl, appendInstance: true))
+                dl.AddText(new Vector2(textX, textY), ImGui.GetColorU32(Theme.Subtle), ZoneLabel(spawn));
 
             // Action buttons in a horizontal row on the right
             var totalBtnW = CmpButtonW * 3 + CmpBtnGap * 2;
@@ -334,8 +336,11 @@ internal static class SpawnCardRenderer
         return (max, ts);
     }
 
-    // Returns true if a route hint was drawn (false if no route data for this spawn).
-    private static bool DrawRouteHint(SpawnInfo spawn, Vector2 pos, ImDrawListPtr dl)
+    // Returns true if a route hint was drawn (false if no route data for this
+    // spawn). When appendInstance is set, the instance suffix is added so the
+    // compact card (which hides the zone line behind this hint) still shows it.
+    private static bool DrawRouteHint(SpawnInfo spawn, Vector2 pos, ImDrawListPtr dl,
+                                      bool appendInstance = false)
     {
         if (spawn.ZonePoiId <= 0) return false;
         if (!FaloopRoutes.RouteByPoiId.TryGetValue(spawn.ZonePoiId, out var route)) return false;
@@ -343,6 +348,8 @@ internal static class SpawnCardRenderer
         var line = string.IsNullOrEmpty(route.Hint)
             ? $"→ {route.Aetheryte}"
             : $"→ {route.Aetheryte}  ·  {route.Hint}";
+        if (appendInstance && spawn.ZoneInstance > 0)
+            line += $"  ·  i{spawn.ZoneInstance}";
         dl.AddText(pos, ImGui.GetColorU32(Theme.RouteHint), line);
         return true;
     }
@@ -440,6 +447,10 @@ internal static class SpawnCardRenderer
             // Cross-zone walking arrow — drawn BEFORE the marker so the
             // marker sits on top of the arrowhead tip.
             DrawCrossZoneArrow(dl, spawn, m, pos, size, uvMin, uvMax);
+
+            // In-zone aetheryte you'd teleport to — drawn before the spawn
+            // marker so the route reads visually: aetheryte → (connector) → mob.
+            DrawAetheryteMarker(dl, spawn, m, pos, size, uvMin, uvMax);
 
             var pulse     = 0.5f + 0.5f * MathF.Sin((float)Environment.TickCount / 240f);
             var haloR     = 11f + 3.5f * pulse;
@@ -539,6 +550,96 @@ internal static class SpawnCardRenderer
         return inside + dir * t;
     }
 
+    // Draw the in-zone aetheryte you'd teleport to as a small blue crystal
+    // glyph, plus a faint connector to the spawn marker so the thumbnail reads
+    // "TP here → run to mob". Cross-zone routes already have their own gateway
+    // arrow (ResolveInZoneAetheryte returns null for those), so the two never
+    // fight. Aetheryte sky-blue is deliberately distinct from the gold spawn
+    // dot and the cyan cross-zone arrow.
+    private static void DrawAetheryteMarker(ImDrawListPtr dl, SpawnInfo spawn,
+                                            Vector2 spawnPos, Vector2 thumbPos, float thumbSize,
+                                            Vector2 uvMin, Vector2 uvMax)
+    {
+        var raw = ResolveInZoneAetheryte(spawn);
+        if (raw == null) return;
+
+        var aU = (raw.Value.x / 2048f - uvMin.X) / (uvMax.X - uvMin.X);
+        var aV = (raw.Value.y / 2048f - uvMin.Y) / (uvMax.Y - uvMin.Y);
+        var a  = thumbPos + new Vector2(aU, aV) * thumbSize;
+
+        // Off the visible crop → skip (its zone is on-map but cropped out).
+        if (a.X < thumbPos.X || a.X > thumbPos.X + thumbSize ||
+            a.Y < thumbPos.Y || a.Y > thumbPos.Y + thumbSize)
+            return;
+
+        const uint Blue    = 0xFFFFB45A;   // ABGR — sky blue
+        const uint Outline  = 0xCC181E28;
+        const uint Shadow   = 0x60000000;
+
+        // Faint connector aetheryte → spawn (skip if they're basically on top).
+        if ((spawnPos - a).LengthSquared() > 36f)
+        {
+            dl.AddLine(a + new Vector2(1f, 1.5f), spawnPos + new Vector2(1f, 1.5f), Shadow, 2.5f);
+            dl.AddLine(a, spawnPos, (Blue & 0x00FFFFFF) | 0x70000000u, 1.8f);
+        }
+
+        // Diamond crystal built from two triangles (known-good binding API).
+        void Diamond(Vector2 c, float r, uint col)
+        {
+            var n = c + new Vector2(0, -r);
+            var e = c + new Vector2(r, 0);
+            var s = c + new Vector2(0,  r);
+            var w = c + new Vector2(-r, 0);
+            dl.AddTriangleFilled(n, e, s, col);
+            dl.AddTriangleFilled(n, s, w, col);
+        }
+
+        Diamond(a + new Vector2(0.5f, 1f), 5.5f, Shadow);
+        Diamond(a, 5f, Blue);
+
+        var an = a + new Vector2(0, -5f);
+        var ae = a + new Vector2(5f, 0);
+        var as_ = a + new Vector2(0, 5f);
+        var aw = a + new Vector2(-5f, 0);
+        dl.AddLine(an, ae, Outline, 1.2f);
+        dl.AddLine(ae, as_, Outline, 1.2f);
+        dl.AddLine(as_, aw, Outline, 1.2f);
+        dl.AddLine(aw, an, Outline, 1.2f);
+
+        Diamond(a, 1.8f, 0xFFFFFFFFu);
+    }
+
+    // Resolve the raw 2048-scale coords of the in-zone aetheryte this spawn's
+    // route teleports you to. Returns null for cross-zone routes (handled by
+    // the gateway arrow instead) or when no aetheryte position is known.
+    private static (int x, int y)? ResolveInZoneAetheryte(SpawnInfo spawn)
+    {
+        if (spawn.TerritoryId == 0) return null;
+
+        string? aetheryteName = null;
+        if (spawn.ZonePoiId > 0 &&
+            FaloopRoutes.RouteByPoiId.TryGetValue(spawn.ZonePoiId, out var route))
+        {
+            // Cross-zone route — the gateway arrow already shows the entry.
+            if (route.GatewayX > 0 || route.GatewayY > 0) return null;
+            aetheryteName = route.Aetheryte;
+        }
+
+        aetheryteName ??= TeleportRoutine.FindAetheryteForTerritory(
+            spawn.TerritoryId, spawn.RawX, spawn.RawY);
+        if (string.IsNullOrEmpty(aetheryteName)) return null;
+
+        var slug = FaloopData.SlugForTerritory(spawn.TerritoryId);
+        if (slug == null ||
+            !FaloopData.ZoneAetherytes.TryGetValue(slug, out var aetherytes))
+            return null;
+
+        foreach (var (name, x, y) in aetherytes)
+            if (string.Equals(name, aetheryteName, StringComparison.OrdinalIgnoreCase))
+                return (x, y);
+        return null;
+    }
+
     private static string? TryGetMapTexturePath(uint mapId)
     {
         if (mapId == 0) return null;
@@ -549,6 +650,15 @@ internal static class SpawnCardRenderer
         var fileName = key.Replace("/", string.Empty);
         return $"ui/map/{key}/{fileName}_m.tex";
     }
+
+    // Zone name plus the FFXIV instance suffix (" i2") when the spawn is in an
+    // instanced copy of the zone — critical for actually finding the mob, since
+    // instance 1/2/3 are separate map copies. Shared by every card variant and
+    // the chat echo so the format never drifts.
+    internal static string ZoneLabel(SpawnInfo spawn) =>
+        spawn.ZoneInstance > 0
+            ? $"{spawn.ZoneName}  i{spawn.ZoneInstance}"
+            : spawn.ZoneName;
 
     private static string FormatAge(TimeSpan age) =>
         age.TotalHours >= 1

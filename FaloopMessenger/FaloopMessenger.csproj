@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <Version>0.1.12.0</Version>
-    <AssemblyVersion>0.1.12.0</AssemblyVersion>
-    <FileVersion>0.1.12.0</FileVersion>
+    <Version>0.1.13.0</Version>
+    <AssemblyVersion>0.1.13.0</AssemblyVersion>
+    <FileVersion>0.1.13.0</FileVersion>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
@@ -16,5 +16,16 @@
       <Link>Images/Icon.png</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+  </ItemGroup>
+
+  <!-- Hand-maintained Faloop reference tables (mobs / worlds / zones /
+       aetherytes / POI locations / routes). Kept as a diff-friendly JSON
+       resource so patch-day data updates never touch C# logic. Explicit
+       LogicalName so the loader's GetManifestResourceStream key is stable
+       regardless of folder layout. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Data/faloop-data.json">
+      <LogicalName>FaloopMessenger.faloop-data.json</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 </Project>
