@@ -1,4 +1,11 @@
 {
+    "expansionThresholds":  [
+        { "exp":  "ARR", "below":  397 },
+        { "exp":  "HW",  "below":  500 },
+        { "exp":  "StB", "below":  700 },
+        { "exp":  "ShB", "below":  900 },
+        { "exp":  "EW",  "below":  1100 }
+    ],
     "mobs":  {
                  "behemoth":  {
                                   "bnpc":  655,

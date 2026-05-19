@@ -331,7 +331,7 @@ internal static class SpawnCardRenderer
     {
         if (fresh)
         {
-            var pulse = 0.5f + 0.5f * MathF.Sin((float)Environment.TickCount / 220f);
+            var pulse = 0.5f + 0.5f * MathF.Sin((float)(Environment.TickCount64 / 220.0));
             var glowR = radius + 4f + 3f * pulse;
             var glowA = (uint)(0x40 + 0x40 * pulse) << 24 | (rankU32 & 0x00FFFFFF);
             dl.AddCircleFilled(center, glowR, glowA);
@@ -455,7 +455,7 @@ internal static class SpawnCardRenderer
         // Pulse: while ready, or in the last ~18% of the countdown.
         var imminent = p.Ready || p.Frac < 0.18f;
         var pulse    = imminent
-            ? 0.65f + 0.35f * (0.5f + 0.5f * MathF.Sin(Environment.TickCount / 180f))
+            ? 0.65f + 0.35f * (0.5f + 0.5f * MathF.Sin((float)(Environment.TickCount64 / 180.0)))
             : 1f;
 
         var max = pos + size;
@@ -697,7 +697,7 @@ internal static class SpawnCardRenderer
             // marker so the route reads visually: aetheryte → (connector) → mob.
             DrawAetheryteMarker(dl, spawn, m, pos, size, uvMin, uvMax);
 
-            var pulse     = 0.5f + 0.5f * MathF.Sin((float)Environment.TickCount / 240f);
+            var pulse     = 0.5f + 0.5f * MathF.Sin((float)(Environment.TickCount64 / 240.0));
             var haloR     = 11f + 3.5f * pulse;
             var haloAlpha = (byte)(0x30 + 0x40 * (1f - pulse));
             var haloU32   = ((uint)haloAlpha << 24) | 0x0040DAFFu;

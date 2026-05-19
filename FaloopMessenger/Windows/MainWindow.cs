@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Utility.Raii;
@@ -77,12 +76,14 @@ public class MainWindow : Window, IDisposable
 
     private void DrawSpawnList(float availH)
     {
+        // Cached immutable snapshot — zero per-frame allocation. Iterated
+        // directly (no LINQ/ToArray) so the draw loop doesn't churn the GC.
         var spawns = Client.GetSnapshot();
 
         using var child = ImRaii.Child("##spawnList", new Vector2(-1f, availH), false);
         if (!child.Success) return;
 
-        if (spawns.Length == 0)
+        if (spawns.Count == 0)
         {
             ImGui.Spacing();
             ImGui.TextDisabled(Client.State == ConnectionState.Connected
@@ -91,21 +92,26 @@ public class MainWindow : Window, IDisposable
             return;
         }
 
-        var live = spawns.Where(s => !s.IsDead).ToArray();
-        var dead = spawns.Where(s =>  s.IsDead).ToArray();
+        // Pass 1: live cards.
+        for (var i = 0; i < spawns.Count; i++)
+            if (!spawns[i].IsDead)
+                SpawnCardRenderer.DrawCard(spawns[i], Client, compact: false);
 
-        foreach (var spawn in live)
-            SpawnCardRenderer.DrawCard(spawn, Client, compact: false);
-
-        if (dead.Length > 0)
+        // Pass 2: up to 8 recently-killed rows, header drawn lazily on first.
+        var deadShown = 0;
+        for (var i = 0; i < spawns.Count && deadShown < 8; i++)
         {
-            ImGui.Spacing();
-            using (Plugin.FontMedium.Push())
-                ImGui.TextColored(Theme.Subtle, "RECENTLY KILLED");
-            ImGui.Separator();
-            ImGui.Spacing();
-            foreach (var spawn in dead.Take(8))
-                SpawnCardRenderer.DrawDeadRow(spawn);
+            if (!spawns[i].IsDead) continue;
+            if (deadShown == 0)
+            {
+                ImGui.Spacing();
+                using (Plugin.FontMedium.Push())
+                    ImGui.TextColored(Theme.Subtle, "RECENTLY KILLED");
+                ImGui.Separator();
+                ImGui.Spacing();
+            }
+            SpawnCardRenderer.DrawDeadRow(spawns[i]);
+            deadShown++;
         }
     }
 }

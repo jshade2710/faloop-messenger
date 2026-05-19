@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
@@ -35,17 +34,21 @@ public class SpawnListWindow : Window, IDisposable
 
     public override void Draw()
     {
-        var live = _plugin.Client.GetSnapshot()
-            .Where(s => !s.IsDead && s.Rank == HuntRank.S)
-            .ToArray();
+        // Cached snapshot iterated directly — no per-frame LINQ/ToArray.
+        var spawns = _plugin.Client.GetSnapshot();
 
-        if (live.Length == 0)
+        var anyS = false;
+        for (var i = 0; i < spawns.Count; i++)
+            if (!spawns[i].IsDead && spawns[i].Rank == HuntRank.S) { anyS = true; break; }
+
+        if (!anyS)
         {
             ImGui.TextDisabled("No active S-ranks");
             return;
         }
 
-        foreach (var s in live)
-            SpawnCardRenderer.DrawCard(s, _plugin.Client, compact: _compact);
+        for (var i = 0; i < spawns.Count; i++)
+            if (!spawns[i].IsDead && spawns[i].Rank == HuntRank.S)
+                SpawnCardRenderer.DrawCard(spawns[i], _plugin.Client, compact: _compact);
     }
 }

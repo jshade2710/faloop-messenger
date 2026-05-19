@@ -50,24 +50,38 @@ public class FaloopSocketClient : IDisposable
     private          Task?  _loopTask;
     private          string? _sessionId;
 
+    // Immutable snapshot rebuilt under _lock only when _spawns actually
+    // changes. The UI reads this every frame (60–144 Hz); a volatile array
+    // reference read is atomic and allocation-free, so the old per-frame
+    // _spawns.ToArray() GC churn is gone.
+    private volatile SpawnInfo[] _snapshot = System.Array.Empty<SpawnInfo>();
+
     // Set on every received frame; the liveness watchdog aborts the socket if
     // this goes stale (a half-open TCP connection never throws on its own).
-    private volatile int _lastRxTick;
+    // long + Volatile.* (not `volatile int`) so the delta math can't break on
+    // Environment.TickCount's 24.9-day Int32 wrap.
+    private long _lastRxTick;
 
     public FaloopSocketClient(Configuration config) => _config = config;
 
     // ── Public API ────────────────────────────────────────────────────
 
-    public SpawnInfo[] GetSnapshot()
-    {
-        lock (_lock) return _spawns.ToArray();
-    }
+    // Allocation-free: returns the cached immutable snapshot (rebuilt only on
+    // mutation). IReadOnlyList so callers iterate without copying.
+    public IReadOnlyList<SpawnInfo> GetSnapshot() => _snapshot;
+
+    // Must be called inside `lock (_lock)` after any change to _spawns.
+    private void RebuildSnapshotLocked() => _snapshot = _spawns.ToArray();
 
     // Manually remove a spawn from the tracker (e.g. user dismissing a stale entry).
     public void RemoveSpawn(SpawnInfo spawn)
     {
         bool removed;
-        lock (_lock) removed = _spawns.Remove(spawn);
+        lock (_lock)
+        {
+            removed = _spawns.Remove(spawn);
+            if (removed) RebuildSnapshotLocked();
+        }
         if (removed) OnUpdate?.Invoke();
     }
 
@@ -121,10 +135,15 @@ public class FaloopSocketClient : IDisposable
         // after every successful connection.
         var consecutiveFailures = 0;
 
-        // Periodic time-sync background task (started after first connect)
+        // Periodic time-sync background task (started after first connect).
+        // Linked to ct, and guaranteed cancelled + disposed in the finally so
+        // it can never outlive this loop (RestartAsync also awaits this whole
+        // task before starting a new one, so loops never overlap).
         Task? timeSyncTask = null;
         var timeSyncCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
+        try
+        {
         while (!ct.IsCancellationRequested)
         {
             SetState(ConnectionState.Connecting);
@@ -186,9 +205,13 @@ public class FaloopSocketClient : IDisposable
                 Plugin.Log.Information($"[Faloop] Reconnect attempt #{consecutiveFailures + 1} in {delaySec}s");
             await Task.Delay(TimeSpan.FromSeconds(delaySec), ct).ConfigureAwait(false);
         }
-
-        timeSyncCts.Cancel();
-        SetState(ConnectionState.Disconnected);
+        }
+        finally
+        {
+            timeSyncCts.Cancel();
+            timeSyncCts.Dispose();
+            SetState(ConnectionState.Disconnected);
+        }
     }
 
     // Periodically refresh the local↔server clock offset by reading the Date
@@ -340,7 +363,7 @@ public class FaloopSocketClient : IDisposable
         var buf = new byte[65_536];
         using var ms = new System.IO.MemoryStream(65_536);
 
-        _lastRxTick = Environment.TickCount;
+        Volatile.Write(ref _lastRxTick, Environment.TickCount64);
 
         // C-1: liveness watchdog. A half-open TCP connection (NAT idle, Wi-Fi
         // drop, sleep/resume) never delivers FIN/RST, so ReceiveAsync would
@@ -356,7 +379,7 @@ public class FaloopSocketClient : IDisposable
                 while (!idleCts.IsCancellationRequested)
                 {
                     await Task.Delay(5000, idleCts.Token);
-                    if (Environment.TickCount - _lastRxTick > 60_000)
+                    if (Environment.TickCount64 - Volatile.Read(ref _lastRxTick) > 60_000)
                     {
                         Plugin.Log.Warning("[Faloop] No frames for 60s — aborting dead socket.");
                         try { ws.Abort(); } catch { /* forces ReceiveAsync to throw */ }
@@ -377,7 +400,7 @@ public class FaloopSocketClient : IDisposable
                 do
                 {
                     result = await ws.ReceiveAsync(new ArraySegment<byte>(buf), ct);
-                    _lastRxTick = Environment.TickCount;
+                    Volatile.Write(ref _lastRxTick, Environment.TickCount64);
 
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
@@ -683,6 +706,7 @@ public class FaloopSocketClient : IDisposable
                     _spawns.RemoveAt(_spawns.Count - 1);
                 isNew = true;
             }
+            RebuildSnapshotLocked();
         }
 
         if (isNew) OnNewSpawn?.Invoke(spawn);   // don't re-alert on a refresh
@@ -732,6 +756,7 @@ public class FaloopSocketClient : IDisposable
             target.Y    = coords.Value.y;
             target.RawX = coords.Value.rawX;
             target.RawY = coords.Value.rawY;
+            RebuildSnapshotLocked();
         }
         Plugin.Log.Debug($"[Faloop] Updated location for {mobName} on {worldName}: ({coords.Value.x:F1}, {coords.Value.y:F1})");
 
@@ -782,6 +807,7 @@ public class FaloopSocketClient : IDisposable
             {
                 match.IsDead   = true;
                 match.KilledAt = killedAt;
+                RebuildSnapshotLocked();
             }
         }
 
@@ -813,6 +839,7 @@ public class FaloopSocketClient : IDisposable
                 string.Equals(s.MobName, mobName, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(s.World, worldName, StringComparison.OrdinalIgnoreCase) &&
                 s.ZoneInstance == zoneInst);
+            RebuildSnapshotLocked();
         }
 
         OnUpdate?.Invoke();

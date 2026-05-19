@@ -136,20 +136,32 @@ public static class FaloopData
         return _slugByTerritory.TryGetValue(territoryId, out var slug) ? slug : null;
     }
 
+    // Ordered (expansion, "territoryId < below") thresholds, loaded from the
+    // embedded JSON so a patch-day data correction is a JSON edit, not a code
+    // change + re-release. Anything at/above the last threshold (and any new
+    // expansion) falls into DT-and-beyond.
+    private static readonly (Expansion exp, uint below)[] ExpansionThresholds = BuildExpansionThresholds();
+
+    private static (Expansion exp, uint below)[] BuildExpansionThresholds()
+    {
+        var list = new List<(Expansion, uint)>();
+        foreach (var e in FaloopJson.Root.GetProperty("expansionThresholds").EnumerateArray())
+            list.Add((Enum.Parse<Expansion>(e.GetProperty("exp").GetString()!),
+                      e.GetProperty("below").GetUInt32()));
+        return list.ToArray();
+    }
+
     // Classify a hunt zone's TerritoryType ID into its expansion. The hunt
-    // territories are contiguous within each expansion's ID block (ARR ≤ 180,
-    // HW 397–402, StB 612–622, ShB 813–818, EW 956–961, DT 1187+), so simple
-    // thresholds are robust — future expansions get higher IDs and fall into
-    // the DT-and-beyond bucket until the table is extended. Returns null for
-    // an unknown/zero territory so callers can choose not to filter it out.
+    // territories are contiguous within each expansion's ID block, so simple
+    // ordered thresholds (now data-driven via faloop-data.json) are robust;
+    // future expansions get higher IDs and fall into the DT-and-beyond bucket
+    // until the table is extended. Returns null for an unknown/zero territory
+    // so callers can choose not to filter it out.
     public static Expansion? ExpansionForTerritory(uint territoryId)
     {
         if (territoryId == 0) return null;
-        if (territoryId <  397) return Expansion.ARR;
-        if (territoryId <  500) return Expansion.HW;
-        if (territoryId <  700) return Expansion.StB;
-        if (territoryId <  900) return Expansion.ShB;
-        if (territoryId < 1100) return Expansion.EW;
+        foreach (var (exp, below) in ExpansionThresholds)
+            if (territoryId < below) return exp;
         return Expansion.DT;
     }
 
