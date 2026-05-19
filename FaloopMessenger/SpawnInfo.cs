@@ -5,6 +5,10 @@ namespace FaloopMessenger;
 
 public enum HuntRank { S, A, B }
 
+// One reported spawn point: raw 2048-scale (for the map thumbnail UV) plus
+// the in-game map coords (for clickable chat MapLinkPayloads).
+public readonly record struct SpawnPoint(int RawX, int RawY, float MapX, float MapY);
+
 public class SpawnInfo
 {
     public required string World    { get; init; }
@@ -32,10 +36,10 @@ public class SpawnInfo
     // travel route). 0 = unknown.
     public int ZonePoiId { get; set; }
 
-    // All reported 2048-scale points. A normal S-rank has one (== RawX/RawY).
-    // SS "minion" reports come in at several POIs at once — every one of them
-    // is drawn on the map (the old code only kept zonePoiIds[0]).
-    public List<(int X, int Y)> Points { get; init; } = new();
+    // All reported points. A normal S-rank has one (== RawX/RawY); SS "minion"
+    // reports come in at several POIs at once — every one is drawn on the map,
+    // and (on-world) echoed as its own clickable flag.
+    public List<SpawnPoint> Points { get; init; } = new();
 
     // True for SS-rank marks (e.g. Forgiven Rebellion, Ker). They still sit in
     // the S tier for every filter/window — only the badge differs — so adding

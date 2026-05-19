@@ -228,21 +228,49 @@ public sealed class Plugin : IDalamudPlugin
         });
     }
 
-    // Print the spawn to the local chat log with a clickable map link.
+    // Print the spawn to the local chat log. Every reported point becomes its
+    // own independently-clickable map flag on a single line — each
+    // MapLinkPayload is closed with a LinkTerminator so clicking flag #3
+    // plants exactly that point (without the terminator the whole rest of the
+    // line would belong to the first link). SS marks show "SS".
     public static void PrintSpawnEcho(SpawnInfo spawn, string? extraPrefix = null)
     {
         try
         {
+            var rank   = spawn.IsSS ? "SS" : spawn.Rank.ToString();
             var inst   = spawn.ZoneInstance > 0 ? $" i{spawn.ZoneInstance}" : string.Empty;
-            var prefix = $"{extraPrefix}[Hunt {spawn.Rank}] {spawn.MobName} on {spawn.World}{inst} ";
-            var coords = $" ({spawn.X:F1}, {spawn.Y:F1})";
+            var prefix = $"{extraPrefix}[Hunt {rank}] {spawn.MobName} on {spawn.World}{inst}";
 
-            var builder = new SeStringBuilder().AddText(prefix);
-            if (spawn.TerritoryId > 0 && spawn.MapId > 0)
-                builder.Add(new MapLinkPayload(spawn.TerritoryId, spawn.MapId, spawn.X, spawn.Y));
-            builder.AddText(coords);
+            var sb       = new SeStringBuilder().AddText(prefix);
+            var hasLink  = spawn.TerritoryId > 0 && spawn.MapId > 0;
 
-            ChatGui.Print(builder.Build());
+            if (hasLink && spawn.Points.Count > 0)
+            {
+                var multi = spawn.Points.Count > 1;
+                for (var i = 0; i < spawn.Points.Count; i++)
+                {
+                    var p = spawn.Points[i];
+                    sb.AddText("  ");
+                    sb.Add(new MapLinkPayload(spawn.TerritoryId, spawn.MapId, p.MapX, p.MapY));
+                    sb.AddText(multi
+                        ? $"#{i + 1} ({p.MapX:F1}, {p.MapY:F1})"
+                        : $"({p.MapX:F1}, {p.MapY:F1})");
+                    sb.Add(RawPayload.LinkTerminator);
+                }
+            }
+            else if (hasLink)
+            {
+                sb.AddText("  ");
+                sb.Add(new MapLinkPayload(spawn.TerritoryId, spawn.MapId, spawn.X, spawn.Y));
+                sb.AddText($"({spawn.X:F1}, {spawn.Y:F1})");
+                sb.Add(RawPayload.LinkTerminator);
+            }
+            else
+            {
+                sb.AddText($"  ({spawn.X:F1}, {spawn.Y:F1})");
+            }
+
+            ChatGui.Print(sb.Build());
         }
         catch (System.Exception ex)
         {

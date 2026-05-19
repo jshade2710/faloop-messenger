@@ -676,8 +676,8 @@ internal static class SpawnCardRenderer
         var pts = spawn.Points.Count > 0
             ? spawn.Points
             : (spawn.RawX > 0 && spawn.RawY > 0
-                ? new List<(int X, int Y)> { (spawn.RawX, spawn.RawY) }
-                : new List<(int X, int Y)>());
+                ? new List<SpawnPoint> { new(spawn.RawX, spawn.RawY, spawn.X, spawn.Y) }
+                : new List<SpawnPoint>());
         var single    = pts.Count <= 1;
         var hasCoords = pts.Count > 0;
 
@@ -686,8 +686,8 @@ internal static class SpawnCardRenderer
         {
             // Single point → zoom in. Multiple → show the whole map so every
             // marker is visible (a POI cloud is spread across the zone).
-            var uC   = pts[0].X / 2048f;
-            var vC   = pts[0].Y / 2048f;
+            var uC   = pts[0].RawX / 2048f;
+            var vC   = pts[0].RawY / 2048f;
             var half = ThumbZoom / 2f;
             var uMin = MathF.Max(0f, MathF.Min(1f - ThumbZoom, uC - half));
             var vMin = MathF.Max(0f, MathF.Min(1f - ThumbZoom, vC - half));
@@ -714,10 +714,10 @@ internal static class SpawnCardRenderer
 
         if (hasCoords)
         {
-            Vector2 ToScreen((int X, int Y) p)
+            Vector2 ToScreen(SpawnPoint p)
             {
-                var u = (p.X / 2048f - uvMin.X) / (uvMax.X - uvMin.X);
-                var v = (p.Y / 2048f - uvMin.Y) / (uvMax.Y - uvMin.Y);
+                var u = (p.RawX / 2048f - uvMin.X) / (uvMax.X - uvMin.X);
+                var v = (p.RawY / 2048f - uvMin.Y) / (uvMax.Y - uvMin.Y);
                 return pos + new Vector2(u, v) * size;
             }
 
