@@ -372,9 +372,10 @@ internal static class SpawnCardRenderer
     }
 
     // Draw text, ellipsizing only if it can't fit maxW (last-resort safety;
-    // the fluid layout means this almost never triggers). Returns the X the
-    // text actually ended at, so a trailing element (the instance badge) can
-    // butt right up against it.
+    // the fluid layout means this almost never triggers). When it DOES
+    // truncate, hovering the text shows the full string in a tooltip so it's
+    // never lost. Returns the X the text actually ended at, so a trailing
+    // element (the instance badge) can butt right up against it.
     private static float DrawClipped(ImDrawListPtr dl, Vector2 pos, uint col,
                                      string s, float maxW)
     {
@@ -385,12 +386,23 @@ internal static class SpawnCardRenderer
             dl.AddText(pos, col, s);
             return pos.X + ImGui.CalcTextSize(s).X;
         }
+
+        var full = s;
         const string ell = "…";
         while (s.Length > 1 && ImGui.CalcTextSize(s + ell).X > maxW)
             s = s[..^1];
         s += ell;
         dl.AddText(pos, col, s);
-        return pos.X + ImGui.CalcTextSize(s).X;
+
+        var w  = ImGui.CalcTextSize(s).X;
+        var lh = ImGui.GetTextLineHeight();
+        if (ImGui.IsWindowHovered() &&
+            ImGui.IsMouseHoveringRect(pos, new Vector2(pos.X + w, pos.Y + lh)))
+        {
+            using (ImRaii.Tooltip())
+                ImGui.TextUnformatted(full);
+        }
+        return pos.X + w;
     }
 
     // Route hint, fixed slot, clipped to maxW. Blank if no route data (caller
@@ -697,15 +709,36 @@ internal static class SpawnCardRenderer
             // marker so the route reads visually: aetheryte → (connector) → mob.
             DrawAetheryteMarker(dl, spawn, m, pos, size, uvMin, uvMax);
 
-            var pulse     = 0.5f + 0.5f * MathF.Sin((float)(Environment.TickCount64 / 240.0));
-            var haloR     = 11f + 3.5f * pulse;
-            var haloAlpha = (byte)(0x30 + 0x40 * (1f - pulse));
-            var haloU32   = ((uint)haloAlpha << 24) | 0x0040DAFFu;
-            dl.AddCircleFilled(m, haloR, haloU32);
-            dl.AddCircleFilled(m + new Vector2(0.5f, 1f), 6.5f, 0x55000000);
-            dl.AddCircleFilled(m, 6f, 0xFF40DAFFu);
-            dl.AddCircle      (m, 6f, 0xC0202830u, 0, 1.5f);
-            dl.AddCircleFilled(m, 2f, 0xFFFFFFFFu);
+            // FFXIV-style red map flag: thin pole anchored at the exact
+            // coordinate, red pennant waving to the right, with a soft red
+            // pulse halo so it still draws the eye.
+            const uint FlagRed  = 0xFF2A2AE0;   // ABGR — FFXIV map-flag red
+            const uint Dark     = 0xC0101014;
+            const uint Shadow   = 0x66000000;
+
+            var pulse = 0.5f + 0.5f * MathF.Sin((float)(Environment.TickCount64 / 240.0));
+            var haloR = 9f + 3f * pulse;
+            var haloA = (uint)(0x24 + 0x34 * (1f - pulse));
+            dl.AddCircleFilled(m, haloR, (haloA << 24) | 0x002A2AE0u);
+
+            var top = m + new Vector2(0f, -17f);
+
+            // Pole (shadow + light shaft)
+            dl.AddLine(m + new Vector2(1f, 0.5f), top + new Vector2(1f, 0.5f), Shadow, 2.6f);
+            dl.AddLine(m, top, 0xFFEDEDEDu, 1.8f);
+
+            // Pennant
+            var p1 = top + new Vector2(0.5f, 0.5f);
+            var p2 = top + new Vector2(12.5f, 4f);
+            var p3 = top + new Vector2(0.5f, 8.5f);
+            var sh = new Vector2(1f, 1f);
+            dl.AddTriangleFilled(p1 + sh, p2 + sh, p3 + sh, Shadow);
+            dl.AddTriangleFilled(p1, p2, p3, FlagRed);
+            dl.AddTriangle      (p1, p2, p3, Dark, 1.1f);
+
+            // Exact-point anchor
+            dl.AddCircleFilled(m, 2.6f, Dark);
+            dl.AddCircleFilled(m, 1.3f, 0xFFFFFFFFu);
         }
     }
 
