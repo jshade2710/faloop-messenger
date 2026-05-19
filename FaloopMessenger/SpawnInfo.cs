@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace FaloopMessenger;
 
@@ -30,6 +31,16 @@ public class SpawnInfo
     // Faloop's zone POI ID for this spawn (used to look up the precomputed
     // travel route). 0 = unknown.
     public int ZonePoiId { get; set; }
+
+    // All reported 2048-scale points. A normal S-rank has one (== RawX/RawY).
+    // SS "minion" reports come in at several POIs at once — every one of them
+    // is drawn on the map (the old code only kept zonePoiIds[0]).
+    public List<(int X, int Y)> Points { get; init; } = new();
+
+    // True for SS-rank marks (e.g. Forgiven Rebellion, Ker). They still sit in
+    // the S tier for every filter/window — only the badge differs — so adding
+    // this can't make them vanish anywhere S-ranks are shown.
+    public bool IsSS { get; init; }
 
     public bool      IsDead   { get; set; }
     public DateTime? KilledAt { get; set; }

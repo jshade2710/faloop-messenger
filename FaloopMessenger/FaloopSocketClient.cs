@@ -616,18 +616,41 @@ public class FaloopSocketClient : IDisposable
                 return;
         }
 
-        // Resolve coordinates — direct "location" field first, then POI lookup
+        // Resolve coordinates. A normal spawn has a precise "location" or a
+        // single zonePoiId; SS "minion" reports carry several zonePoiIds at
+        // once — collect every one so they each get a map marker (the old
+        // code kept only zonePoiIds[0], hence "a flag for 1").
+        var points = new List<(int X, int Y)>();
         string? locationStr = GetString(spawnData, "location");
         int zonePoiId = 0;
+
         if (spawnData.TryGetProperty("zonePoiIds", out var pois) && pois.GetArrayLength() > 0)
         {
-            zonePoiId = pois[0].GetInt32();
+            if (pois[0].ValueKind == JsonValueKind.Number) zonePoiId = pois[0].GetInt32();
             if (locationStr == null)
-                FaloopData.Locations.TryGetValue(zonePoiId, out locationStr);
+                foreach (var pe in pois.EnumerateArray())
+                {
+                    if (pe.ValueKind != JsonValueKind.Number) continue;
+                    if (FaloopData.Locations.TryGetValue(pe.GetInt32(), out var ploc) &&
+                        TryParseRaw(ploc, out var px, out var py))
+                        points.Add((px, py));
+                }
+        }
+
+        // A precise location supersedes the POI cloud (single refined point).
+        if (locationStr != null && TryParseRaw(locationStr, out var lx, out var ly))
+        {
+            points.Clear();
+            points.Add((lx, ly));
+        }
+        else if (points.Count > 0)
+        {
+            locationStr ??= $"{points[0].X},{points[0].Y}";
         }
 
         float mapX = 0f, mapY = 0f;
-        int   rawX = 0, rawY = 0;
+        int   rawX = points.Count > 0 ? points[0].X : 0;
+        int   rawY = points.Count > 0 ? points[0].Y : 0;
         uint  mapId = 0;
 
         if (territoryId > 0)
@@ -677,6 +700,8 @@ public class FaloopSocketClient : IDisposable
             RawX         = rawX,
             RawY         = rawY,
             ZonePoiId    = zonePoiId,
+            Points       = points,
+            IsSS         = mobInfo.Rank == MobRank.SS,
             RawEvent     = mobData.GetRawText(),
         };
 
@@ -756,6 +781,9 @@ public class FaloopSocketClient : IDisposable
             target.Y    = coords.Value.y;
             target.RawX = coords.Value.rawX;
             target.RawY = coords.Value.rawY;
+            // A precise location collapses the POI cloud to one exact point.
+            target.Points.Clear();
+            target.Points.Add((coords.Value.rawX, coords.Value.rawY));
             RebuildSnapshotLocked();
         }
         Plugin.Log.Debug($"[Faloop] Updated location for {mobName} on {worldName}: ({coords.Value.x:F1}, {coords.Value.y:F1})");
@@ -765,6 +793,15 @@ public class FaloopSocketClient : IDisposable
 
     // Convert Faloop's raw 2048-scale "x,y" string to in-game map coords using
     // the territory's map SizeFactor. Returns null if anything fails.
+    // Parse Faloop's raw 2048-scale "x,y" string into ints.
+    private static bool TryParseRaw(string s, out int x, out int y)
+    {
+        x = y = 0;
+        if (string.IsNullOrEmpty(s)) return false;
+        var p = s.Split(',');
+        return p.Length == 2 && int.TryParse(p[0], out x) && int.TryParse(p[1], out y);
+    }
+
     private static (float x, float y, int rawX, int rawY)? ResolveCoords(uint territoryId, string locationStr)
     {
         if (territoryId == 0 || string.IsNullOrEmpty(locationStr)) return null;

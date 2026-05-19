@@ -123,7 +123,9 @@ internal static class SpawnCardRenderer
             var badgeCenter = new Vector2(
                 origin.X + StdStripeWidth + 11f + StdBadgeRadius,
                 origin.Y + StdCardHeight / 2f);
-            DrawRankBadge(badgeCenter, StdBadgeRadius, spawn.Rank, rankU32, fresh, dl, useTitleFont: true);
+            DrawRankBadge(badgeCenter, StdBadgeRadius,
+                spawn.IsSS ? "SS" : spawn.Rank.ToString(),
+                rankU32, fresh, dl, useTitleFont: true);
 
             // ── Fixed right column: minimal timer chip + 3 buttons ─────
             var pull = PullState(spawn);
@@ -230,7 +232,9 @@ internal static class SpawnCardRenderer
 
             var badgeCenter = new Vector2(
                 origin.X + CmpStripeWidth + 8f + CmpBadgeRadius, origin.Y + CmpCardHeight / 2f);
-            DrawRankBadge(badgeCenter, CmpBadgeRadius, spawn.Rank, rankU32, fresh, dl, useTitleFont: false);
+            DrawRankBadge(badgeCenter, CmpBadgeRadius,
+                spawn.IsSS ? "SS" : spawn.Rank.ToString(),
+                rankU32, fresh, dl, useTitleFont: false);
 
             // Same field order as the standard card (just denser). Minimal
             // timer chip on the right, then the buttons.
@@ -325,7 +329,7 @@ internal static class SpawnCardRenderer
         return clicked;
     }
 
-    private static void DrawRankBadge(Vector2 center, float radius, HuntRank rank,
+    private static void DrawRankBadge(Vector2 center, float radius, string label,
                                       uint rankU32, bool fresh, ImDrawListPtr dl,
                                       bool useTitleFont)
     {
@@ -338,11 +342,13 @@ internal static class SpawnCardRenderer
         }
         dl.AddCircle(center, radius, rankU32, 0, 2.5f);
 
-        var fontHandle = useTitleFont ? Plugin.FontTitle : Plugin.FontMedium;
+        // "SS" needs the smaller font to fit the circle even on the big badge.
+        var fontHandle = (useTitleFont && label.Length < 2)
+            ? Plugin.FontTitle
+            : Plugin.FontMedium;
         using (fontHandle.Push())
         {
-            var label = rank.ToString();   // "S" / "A" / "B"
-            var ts    = ImGui.CalcTextSize(label);
+            var ts = ImGui.CalcTextSize(label);
             dl.AddText(center - ts * 0.5f, rankU32, label);
         }
     }
@@ -665,12 +671,23 @@ internal static class SpawnCardRenderer
         var sharedTex = Plugin.TextureProvider.GetFromGame(path);
         var wrap      = sharedTex.GetWrapOrEmpty();
 
+        // All reported points (SS minions report several at once). Fall back
+        // to the single RawX/RawY when Points is empty.
+        var pts = spawn.Points.Count > 0
+            ? spawn.Points
+            : (spawn.RawX > 0 && spawn.RawY > 0
+                ? new List<(int X, int Y)> { (spawn.RawX, spawn.RawY) }
+                : new List<(int X, int Y)>());
+        var single    = pts.Count <= 1;
+        var hasCoords = pts.Count > 0;
+
         Vector2 uvMin = Vector2.Zero, uvMax = Vector2.One;
-        var hasCoords = spawn.RawX > 0 && spawn.RawY > 0;
-        if (hasCoords)
+        if (hasCoords && single)
         {
-            var uC   = spawn.RawX / 2048f;
-            var vC   = spawn.RawY / 2048f;
+            // Single point → zoom in. Multiple → show the whole map so every
+            // marker is visible (a POI cloud is spread across the zone).
+            var uC   = pts[0].X / 2048f;
+            var vC   = pts[0].Y / 2048f;
             var half = ThumbZoom / 2f;
             var uMin = MathF.Max(0f, MathF.Min(1f - ThumbZoom, uC - half));
             var vMin = MathF.Max(0f, MathF.Min(1f - ThumbZoom, vC - half));
@@ -697,29 +714,41 @@ internal static class SpawnCardRenderer
 
         if (hasCoords)
         {
-            var displayU = (spawn.RawX / 2048f - uvMin.X) / (uvMax.X - uvMin.X);
-            var displayV = (spawn.RawY / 2048f - uvMin.Y) / (uvMax.Y - uvMin.Y);
-            var m        = pos + new Vector2(displayU, displayV) * size;
+            Vector2 ToScreen((int X, int Y) p)
+            {
+                var u = (p.X / 2048f - uvMin.X) / (uvMax.X - uvMin.X);
+                var v = (p.Y / 2048f - uvMin.Y) / (uvMax.Y - uvMin.Y);
+                return pos + new Vector2(u, v) * size;
+            }
 
-            // Cross-zone walking arrow — drawn BEFORE the marker so the
-            // marker sits on top of the arrowhead tip.
-            DrawCrossZoneArrow(dl, spawn, m, pos, size, uvMin, uvMax);
+            // Clean pulsing dot, scalable so a cloud of minion points stays
+            // legible (smaller dots when there are many).
+            var pulse = 0.5f + 0.5f * MathF.Sin((float)(Environment.TickCount64 / 240.0));
+            void Dot(Vector2 m, float k)
+            {
+                var haloR = (11f + 3.5f * pulse) * k;
+                var haloA = (byte)(0x30 + 0x40 * (1f - pulse));
+                dl.AddCircleFilled(m, haloR, ((uint)haloA << 24) | 0x0040DAFFu);
+                dl.AddCircleFilled(m + new Vector2(0.5f, 1f), 6.5f * k, 0x55000000);
+                dl.AddCircleFilled(m, 6f * k, 0xFF40DAFFu);
+                dl.AddCircle      (m, 6f * k, 0xC0202830u, 0, 1.5f);
+                dl.AddCircleFilled(m, 2f * k, 0xFFFFFFFFu);
+            }
 
-            // In-zone aetheryte you'd teleport to — drawn before the spawn
-            // marker so the route reads visually: aetheryte → (connector) → mob.
-            DrawAetheryteMarker(dl, spawn, m, pos, size, uvMin, uvMax);
-
-            // Clean pulsing marker (reverted — a draw-list flag rendered badly
-            // at thumbnail scale).
-            var pulse     = 0.5f + 0.5f * MathF.Sin((float)(Environment.TickCount64 / 240.0));
-            var haloR     = 11f + 3.5f * pulse;
-            var haloAlpha = (byte)(0x30 + 0x40 * (1f - pulse));
-            var haloU32   = ((uint)haloAlpha << 24) | 0x0040DAFFu;
-            dl.AddCircleFilled(m, haloR, haloU32);
-            dl.AddCircleFilled(m + new Vector2(0.5f, 1f), 6.5f, 0x55000000);
-            dl.AddCircleFilled(m, 6f, 0xFF40DAFFu);
-            dl.AddCircle      (m, 6f, 0xC0202830u, 0, 1.5f);
-            dl.AddCircleFilled(m, 2f, 0xFFFFFFFFu);
+            if (single)
+            {
+                var m = ToScreen(pts[0]);
+                // Route hints only make sense for a single target.
+                DrawCrossZoneArrow(dl, spawn, m, pos, size, uvMin, uvMax);
+                DrawAetheryteMarker(dl, spawn, m, pos, size, uvMin, uvMax);
+                Dot(m, 1f);
+            }
+            else
+            {
+                // Every reported SS-minion point gets its own marker.
+                foreach (var p in pts)
+                    Dot(ToScreen(p), 0.7f);
+            }
         }
     }
 
