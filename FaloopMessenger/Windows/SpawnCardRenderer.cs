@@ -44,16 +44,52 @@ internal static class SpawnCardRenderer
     private const float ThumbZoom       = 0.25f;   // fraction of texture to show
     private const float FadeMs          = 600f;    // intro flash duration
 
+    // ── Fixed-size text ───────────────────────────────────────────────
+    // The card is pixel-static regardless of Dalamud's global font scale:
+    // every text draw goes through ImDrawList's explicit-size AddText
+    // overload, which renders at exactly the given px (the global scale
+    // only affects the *implicit* current-font size). Fonts are locked
+    // once per DrawCard to obtain their ImFontPtr.
+    private const float PxWorld  = 28f;
+    private const float PxTitle  = 22f;
+    private const float PxMedium = 16f;
+
+    private static ImFontPtr _fWorld, _fTitle, _fMedium;
+
+    // Measure a string as if rendered at exactly `px`, independent of the
+    // global font scale: push the font, measure at its current size, then
+    // ratio down to px (the same px we hand to the explicit-size AddText).
+    private static Vector2 Measure(ImFontPtr font, float px, string s)
+    {
+        ImGui.PushFont(font);
+        var k = px / ImGui.GetFontSize();
+        var w = ImGui.CalcTextSize(s);
+        ImGui.PopFont();
+        return w * k;
+    }
+
+    private static void DrawText(ImDrawListPtr dl, ImFontPtr font, float px,
+                                 Vector2 pos, uint col, string s)
+        => dl.AddText(font, px, pos, col, s);
+
     // ── Public entry ──────────────────────────────────────────────────
 
     public static void DrawCard(SpawnInfo spawn, FaloopSocketClient client, bool compact)
     {
+        using var lw = Plugin.FontWorld.Lock();
+        using var lt = Plugin.FontTitle.Lock();
+        using var lm = Plugin.FontMedium.Lock();
+        _fWorld = lw.ImFont; _fTitle = lt.ImFont; _fMedium = lm.ImFont;
+
         if (compact) DrawCompactCard(spawn, client);
         else         DrawStandardCard(spawn, client);
     }
 
     public static void DrawDeadRow(SpawnInfo spawn)
     {
+        using var lm = Plugin.FontMedium.Lock();
+        _fMedium = lm.ImFont;
+
         const float DeadH = 30f;
         var origin = ImGui.GetCursorScreenPos();
         var width  = ImGui.GetContentRegionAvail().X;
@@ -67,8 +103,8 @@ internal static class SpawnCardRenderer
         var badgeC = new Vector2(origin.X + StdStripeWidth + 14f, origin.Y + DeadH / 2f);
         var mutedU = ImGui.GetColorU32(Theme.Muted);
         dl.AddCircle(badgeC, 8f, mutedU, 0, 1.5f);
-        var xs = ImGui.CalcTextSize("✗");
-        dl.AddText(badgeC - xs * 0.5f, mutedU, "✗");
+        var xs = Measure(_fMedium, PxMedium, "✗");
+        DrawText(dl, _fMedium, PxMedium, badgeC - xs * 0.5f, mutedU, "✗");
 
         var killedAt = spawn.KilledAt ?? TimeSync.ServerNow;
         var age      = TimeSync.ServerNow - killedAt;
@@ -78,8 +114,8 @@ internal static class SpawnCardRenderer
         parts.Add($"killed {FormatAge(age)} ago");
         var text = string.Join("  ·  ", parts);
 
-        var textY = origin.Y + (DeadH - ImGui.GetTextLineHeight()) / 2f;
-        dl.AddText(new Vector2(badgeC.X + 14f, textY),
+        var textY = origin.Y + (DeadH - PxMedium) / 2f;
+        DrawText(dl, _fMedium, PxMedium, new Vector2(badgeC.X + 14f, textY),
             ImGui.GetColorU32(Theme.TextTertiary), text);
 
         ImGui.Dummy(new Vector2(width, DeadH));
@@ -145,7 +181,7 @@ internal static class SpawnCardRenderer
                               pull, spawnKey);
                 colY += StdChipH + 8f;
             }
-            DrawActionButtonsStacked(spawn, colX, colY, StdColW, StdBtnH, StdBtnGap, spawnKey);
+            DrawActionButtonsStacked(dl, spawn, colX, colY, StdColW, StdBtnH, StdBtnGap, spawnKey);
 
             // ── Fluid columns: text has a floor + grows; the map is the
             //    elastic element (shrinks, then collapses on a narrow window).
@@ -172,27 +208,23 @@ internal static class SpawnCardRenderer
             var y = origin.Y + StdCardPad;
 
             // Row 1 — WORLD (title) + instance badge
-            using (Plugin.FontWorld.Push())
             {
                 var badgeW = spawn.ZoneInstance > 0
                     ? MeasureInstanceBadge(spawn.ZoneInstance) + 10f
                     : 0f;
-                var endX = DrawClipped(dl, new Vector2(textX, y),
+                var endX = DrawClipped(dl, _fWorld, PxWorld, new Vector2(textX, y),
                     ImGui.GetColorU32(Theme.TextPrimary), spawn.World,
                     textRight - textX - badgeW);
                 if (spawn.ZoneInstance > 0)
                     DrawInstanceBadge(dl, new Vector2(endX + 10f, y + 6f), spawn.ZoneInstance);
-                y += ImGui.GetTextLineHeight() + 1f;
+                y += PxWorld + 1f;
             }
 
             // Row 2 — mob name (secondary)
-            using (Plugin.FontMedium.Push())
-            {
-                DrawClipped(dl, new Vector2(textX, y),
-                    ImGui.GetColorU32(Theme.TextSecondary), spawn.MobName,
-                    textRight - textX);
-                y += ImGui.GetTextLineHeight() + 4f;
-            }
+            DrawClipped(dl, _fMedium, PxMedium, new Vector2(textX, y),
+                ImGui.GetColorU32(Theme.TextSecondary), spawn.MobName,
+                textRight - textX);
+            y += PxMedium + 4f;
 
             // Row 3 — meta strip (priority-degrading; clips the live segment)
             y = DrawMetaRow(dl, spawn, fresh, new Vector2(textX, y), textRight);
@@ -262,9 +294,8 @@ internal static class SpawnCardRenderer
 
             // Row 1 — WORLD (title) + instance badge + trailing mob name,
             //         each clipped so nothing overruns the chip/buttons.
-            using (Plugin.FontMedium.Push())
             {
-                var cursorX = DrawClipped(dl, new Vector2(textX, y),
+                var cursorX = DrawClipped(dl, _fMedium, PxMedium, new Vector2(textX, y),
                     ImGui.GetColorU32(Theme.TextPrimary), spawn.World,
                     (textRight - textX) * 0.55f);
                 cursorX += 8f;
@@ -273,10 +304,10 @@ internal static class SpawnCardRenderer
                     cursorX = DrawInstanceBadge(dl, new Vector2(cursorX, y + 1f),
                         spawn.ZoneInstance) + 8f;
                 }
-                DrawClipped(dl, new Vector2(cursorX, y + 2f),
+                DrawClipped(dl, _fMedium, PxMedium, new Vector2(cursorX, y + 2f),
                     ImGui.GetColorU32(Theme.TextSecondary), spawn.MobName,
                     textRight - cursorX);
-                y += ImGui.GetTextLineHeight() + 4f;
+                y += PxMedium + 4f;
             }
 
             // Row 2 — meta strip (same builder as the standard card)
@@ -284,7 +315,7 @@ internal static class SpawnCardRenderer
 
             // Actions: primary + neutral secondaries, vertically centred
             var aBtnY = origin.Y + (CmpCardHeight - CmpBtnH) / 2f;
-            DrawActionButtonsCompact(spawn, btnX0, aBtnY, spawnKey);
+            DrawActionButtonsCompact(dl, spawn, btnX0, aBtnY, spawnKey);
         }
 
         ImGui.SetCursorScreenPos(origin + new Vector2(0f, CmpCardHeight + 4f));
@@ -348,8 +379,8 @@ internal static class SpawnCardRenderer
         var clicked = ImGui.IsItemClicked();
 
         var col = hovered ? 0xFFFFFFFFu : 0x70AAAAAAu;
-        var ts  = ImGui.CalcTextSize("{}");
-        dl.AddText(p + (new Vector2(size, size) - ts) * 0.5f, col, "{}");
+        var ts  = Measure(_fMedium, PxMedium, "{}");
+        DrawText(dl, _fMedium, PxMedium, p + (new Vector2(size, size) - ts) * 0.5f, col, "{}");
 
         if (hovered)
             using (ImRaii.Tooltip())
@@ -387,14 +418,11 @@ internal static class SpawnCardRenderer
         dl.AddCircle(center, radius, rankU32, 0, 2.5f);
 
         // "SS" needs the smaller font to fit the circle even on the big badge.
-        var fontHandle = (useTitleFont && label.Length < 2)
-            ? Plugin.FontTitle
-            : Plugin.FontMedium;
-        using (fontHandle.Push())
-        {
-            var ts = ImGui.CalcTextSize(label);
-            dl.AddText(center - ts * 0.5f, rankU32, label);
-        }
+        var big  = useTitleFont && label.Length < 2;
+        var font = big ? _fTitle : _fMedium;
+        var px   = big ? PxTitle : PxMedium;
+        var ts   = Measure(font, px, label);
+        DrawText(dl, font, px, center - ts * 0.5f, rankU32, label);
     }
 
     // Small high-contrast "i2" pill next to the world title. Manages its own
@@ -403,22 +431,17 @@ internal static class SpawnCardRenderer
     private static readonly Vector2 InstancePad = new(7f, 2f);
 
     private static float MeasureInstanceBadge(int instance)
-    {
-        using (Plugin.FontMedium.Push())
-            return ImGui.CalcTextSize($"i{instance}").X + InstancePad.X * 2f;
-    }
+        => Measure(_fMedium, PxMedium, $"i{instance}").X + InstancePad.X * 2f;
 
     private static float DrawInstanceBadge(ImDrawListPtr dl, Vector2 topLeft, int instance)
     {
-        using (Plugin.FontMedium.Push())
-        {
-            var label = $"i{instance}";
-            var ts    = ImGui.CalcTextSize(label);
-            var max   = topLeft + ts + InstancePad * 2f;
-            dl.AddRectFilled(topLeft, max, ImGui.GetColorU32(Theme.InstanceBg), 4f);
-            dl.AddText(topLeft + InstancePad, ImGui.GetColorU32(Theme.InstanceText), label);
-            return max.X;
-        }
+        var label = $"i{instance}";
+        var ts    = Measure(_fMedium, PxMedium, label);
+        var max   = topLeft + ts + InstancePad * 2f;
+        dl.AddRectFilled(topLeft, max, ImGui.GetColorU32(Theme.InstanceBg), 4f);
+        DrawText(dl, _fMedium, PxMedium, topLeft + InstancePad,
+            ImGui.GetColorU32(Theme.InstanceText), label);
+        return max.X;
     }
 
     // Draw text, ellipsizing only if it can't fit maxW (last-resort safety;
@@ -426,28 +449,27 @@ internal static class SpawnCardRenderer
     // truncate, hovering the text shows the full string in a tooltip so it's
     // never lost. Returns the X the text actually ended at, so a trailing
     // element (the instance badge) can butt right up against it.
-    private static float DrawClipped(ImDrawListPtr dl, Vector2 pos, uint col,
-                                     string s, float maxW)
+    private static float DrawClipped(ImDrawListPtr dl, ImFontPtr font, float px,
+                                     Vector2 pos, uint col, string s, float maxW)
     {
         if (string.IsNullOrEmpty(s)) return pos.X;
         if (maxW <= 1f) return pos.X;
-        if (ImGui.CalcTextSize(s).X <= maxW)
+        if (Measure(font, px, s).X <= maxW)
         {
-            dl.AddText(pos, col, s);
-            return pos.X + ImGui.CalcTextSize(s).X;
+            DrawText(dl, font, px, pos, col, s);
+            return pos.X + Measure(font, px, s).X;
         }
 
         var full = s;
         const string ell = "…";
-        while (s.Length > 1 && ImGui.CalcTextSize(s + ell).X > maxW)
+        while (s.Length > 1 && Measure(font, px, s + ell).X > maxW)
             s = s[..^1];
         s += ell;
-        dl.AddText(pos, col, s);
+        DrawText(dl, font, px, pos, col, s);
 
-        var w  = ImGui.CalcTextSize(s).X;
-        var lh = ImGui.GetTextLineHeight();
+        var w = Measure(font, px, s).X;
         if (ImGui.IsWindowHovered() &&
-            ImGui.IsMouseHoveringRect(pos, new Vector2(pos.X + w, pos.Y + lh)))
+            ImGui.IsMouseHoveringRect(pos, new Vector2(pos.X + w, pos.Y + px)))
         {
             using (ImRaii.Tooltip())
                 ImGui.TextUnformatted(full);
@@ -466,7 +488,7 @@ internal static class SpawnCardRenderer
         var line = string.IsNullOrEmpty(route.Hint)
             ? $"→ {route.Aetheryte}"
             : $"→ {route.Aetheryte}  ·  {route.Hint}";
-        DrawClipped(dl, pos, ImGui.GetColorU32(Theme.RouteHint), line, maxW);
+        DrawClipped(dl, _fMedium, PxMedium, pos, ImGui.GetColorU32(Theme.RouteHint), line, maxW);
     }
 
     // ── Pull state ────────────────────────────────────────────────────
@@ -533,14 +555,13 @@ internal static class SpawnCardRenderer
             dl.AddRect(pos, max, ImGui.GetColorU32(border), 5f, 0, 1.3f);
         }
 
-        using (Plugin.FontMedium.Push())
         {
             var label = p.Ready ? "PULL" : $"ET {p.Et}";
-            var ts    = ImGui.CalcTextSize(label);
+            var ts    = Measure(_fMedium, PxMedium, label);
             var tcol  = p.Ready
                 ? Theme.PullPanelBg
                 : new Vector4(accent.X, accent.Y, accent.Z, pulse);
-            dl.AddText(
+            DrawText(dl, _fMedium, PxMedium,
                 new Vector2(pos.X + (size.X - ts.X) / 2f, pos.Y + (size.Y - ts.Y) / 2f),
                 ImGui.GetColorU32(tcol), label);
         }
@@ -564,16 +585,15 @@ internal static class SpawnCardRenderer
     {
         var tertiary = ImGui.GetColorU32(Theme.TextTertiary);
         var sepU     = ImGui.GetColorU32(Theme.Muted);
-        var lh       = ImGui.GetTextLineHeight();
         var x        = pos.X;
-        var midY     = pos.Y + lh / 2f;
+        var midY     = pos.Y + PxMedium / 2f;
 
         void Sep()
         {
             if (x >= rightX) return;
-            var w = ImGui.CalcTextSize("  ·  ").X;
+            var w = Measure(_fMedium, PxMedium, "  ·  ").X;
             if (x + w > rightX) { x = rightX; return; }   // no room → stop the strip
-            dl.AddText(new Vector2(x, pos.Y), sepU, "  ·  ");
+            DrawText(dl, _fMedium, PxMedium, new Vector2(x, pos.Y), sepU, "  ·  ");
             x += w;
         }
         void Seg(string s, uint col)
@@ -581,7 +601,7 @@ internal static class SpawnCardRenderer
             if (string.IsNullOrEmpty(s) || x >= rightX) return;
             // Clip the *active* segment too, so a long leading zone name
             // truncates instead of overrunning into the map.
-            x = DrawClipped(dl, new Vector2(x, pos.Y), col, s, rightX - x);
+            x = DrawClipped(dl, _fMedium, PxMedium, new Vector2(x, pos.Y), col, s, rightX - x);
         }
 
         // Pre-release (Faloop "isScheduled") — leading amber flag so a
@@ -618,7 +638,7 @@ internal static class SpawnCardRenderer
             Seg($"by {spawn.Reporter}", tertiary);
         }
 
-        return pos.Y + lh + 4f;
+        return pos.Y + PxMedium + 4f;
     }
 
     private static string MmSs(TimeSpan t)
@@ -632,79 +652,71 @@ internal static class SpawnCardRenderer
     // One accent PRIMARY (Teleport) on top + neutral secondaries stacked below
     // — keeps the card short (no extra button row) while still giving the eye
     // a single primary instead of a wall of identical gold chips.
-    private static void DrawActionButtonsStacked(SpawnInfo spawn, float x0, float y0,
+    private static void DrawActionButtonsStacked(ImDrawListPtr dl, SpawnInfo spawn,
+                                                 float x0, float y0,
                                                  float btnW, float btnH, float gap, long spawnKey)
     {
-        var canAct        = spawn.TerritoryId > 0;
-        var isTeleporting = TeleportRoutine.InProgress.Contains(spawnKey);
+        var canAct = spawn.TerritoryId > 0;
+        var isTP   = TeleportRoutine.InProgress.Contains(spawnKey);
         var sz = new Vector2(btnW, btnH);
         var y  = y0;
 
-        if (isTeleporting || !canAct) ImGui.BeginDisabled();
-        DrawPrimaryButton(isTeleporting ? "Teleporting…" : "Teleport",
-            $"##tp_{spawnKey}", new Vector2(x0, y), sz,
+        DrawButton(dl, isTP ? "TP'ing…" : "Teleport", $"##tp_{spawnKey}",
+            new Vector2(x0, y), sz, primary: true, disabled: isTP || !canAct,
             () => TeleportRoutine.Teleport(spawn));
-        if (isTeleporting || !canAct) ImGui.EndDisabled();
         y += btnH + gap;
 
         // Flag removed — clicking the map thumbnail places the flag now.
-        if (!canAct) ImGui.BeginDisabled();
-        DrawNeutralButton("Ping", $"##ping_{spawnKey}",
-            new Vector2(x0, y), sz, () => TeleportRoutine.Ping(spawn));
-        if (!canAct) ImGui.EndDisabled();
+        DrawButton(dl, "Ping", $"##ping_{spawnKey}", new Vector2(x0, y), sz,
+            primary: false, disabled: !canAct, () => TeleportRoutine.Ping(spawn));
         y += btnH + gap;
-        DrawNeutralButton("PF", $"##pf_{spawnKey}",
-            new Vector2(x0, y), sz, TeleportRoutine.OpenPartyFinder);
+        DrawButton(dl, "PF", $"##pf_{spawnKey}", new Vector2(x0, y), sz,
+            primary: false, disabled: false, TeleportRoutine.OpenPartyFinder);
     }
 
-    private static void DrawActionButtonsCompact(SpawnInfo spawn, float x0, float y0, long spawnKey)
+    private static void DrawActionButtonsCompact(ImDrawListPtr dl, SpawnInfo spawn,
+                                                 float x0, float y0, long spawnKey)
     {
-        var canAct        = spawn.TerritoryId > 0;
-        var isTeleporting = TeleportRoutine.InProgress.Contains(spawnKey);
-        var x = x0;
+        var canAct = spawn.TerritoryId > 0;
+        var isTP   = TeleportRoutine.InProgress.Contains(spawnKey);
+        var sz = new Vector2(CmpButtonW, CmpBtnH);
+        var x  = x0;
 
-        if (isTeleporting || !canAct) ImGui.BeginDisabled();
-        DrawPrimaryButton(isTeleporting ? "TP…" : "TP",
-            $"##tp_{spawnKey}", new Vector2(x, y0), new Vector2(CmpButtonW, CmpBtnH),
-            () => TeleportRoutine.Teleport(spawn));
-        if (isTeleporting || !canAct) ImGui.EndDisabled();
+        DrawButton(dl, isTP ? "TP…" : "TP", $"##tp_{spawnKey}", new Vector2(x, y0), sz,
+            primary: true, disabled: isTP || !canAct, () => TeleportRoutine.Teleport(spawn));
         x += CmpButtonW + CmpBtnGap;
 
-        // Compact has no map thumbnail to click, so Flag lives here (in place
-        // of Ping) — placing the flag is the more useful one-tap action.
-        if (!canAct) ImGui.BeginDisabled();
-        DrawNeutralButton("Flag", $"##flag_{spawnKey}",
-            new Vector2(x, y0), new Vector2(CmpButtonW, CmpBtnH),
-            () => TeleportRoutine.SetFlag(spawn));
-        if (!canAct) ImGui.EndDisabled();
+        // Compact has no map thumbnail to click, so Flag lives here.
+        DrawButton(dl, "Flag", $"##flag_{spawnKey}", new Vector2(x, y0), sz,
+            primary: false, disabled: !canAct, () => TeleportRoutine.SetFlag(spawn));
         x += CmpButtonW + CmpBtnGap;
-        DrawNeutralButton("PF", $"##pf_{spawnKey}",
-            new Vector2(x, y0), new Vector2(CmpButtonW, CmpBtnH),
-            TeleportRoutine.OpenPartyFinder);
+        DrawButton(dl, "PF", $"##pf_{spawnKey}", new Vector2(x, y0), sz,
+            primary: false, disabled: false, TeleportRoutine.OpenPartyFinder);
     }
 
-    private static void DrawPrimaryButton(string label, string id, Vector2 pos, Vector2 size, System.Action onClick)
+    // Custom-drawn button — the label renders at a fixed px (via DrawText), so
+    // a large Dalamud font can't clip or reflow it. InvisibleButton powers the
+    // click/hover; the rect + label are drawn on the window draw list.
+    private static void DrawButton(ImDrawListPtr dl, string label, string id,
+                                   Vector2 pos, Vector2 size, bool primary,
+                                   bool disabled, System.Action onClick)
     {
-        using (ImRaii.PushColor(ImGuiCol.Button,        Theme.BtnGold))
-        using (ImRaii.PushColor(ImGuiCol.ButtonHovered, Theme.BtnGoldHov))
-        using (ImRaii.PushColor(ImGuiCol.ButtonActive,  Theme.BtnGoldActv))
-        using (ImRaii.PushColor(ImGuiCol.Text,          Theme.BtnGoldText))
-        {
-            ImGui.SetCursorScreenPos(pos);
-            if (ImGui.Button($"{label}{id}", size)) onClick();
-        }
-    }
+        ImGui.SetCursorScreenPos(pos);
+        ImGui.InvisibleButton(id, size);
+        var hovered = !disabled && ImGui.IsItemHovered();
+        var active  = !disabled && ImGui.IsItemActive();
+        if (!disabled && ImGui.IsItemClicked()) onClick();
 
-    private static void DrawNeutralButton(string label, string id, Vector2 pos, Vector2 size, System.Action onClick)
-    {
-        using (ImRaii.PushColor(ImGuiCol.Button,        Theme.BtnNeutral))
-        using (ImRaii.PushColor(ImGuiCol.ButtonHovered, Theme.BtnNeutralHov))
-        using (ImRaii.PushColor(ImGuiCol.ButtonActive,  Theme.BtnNeutralActv))
-        using (ImRaii.PushColor(ImGuiCol.Text,          Theme.BtnNeutralText))
-        {
-            ImGui.SetCursorScreenPos(pos);
-            if (ImGui.Button($"{label}{id}", size)) onClick();
-        }
+        var bg = primary
+            ? (active ? Theme.BtnGoldActv : hovered ? Theme.BtnGoldHov : Theme.BtnGold)
+            : (active ? Theme.BtnNeutralActv : hovered ? Theme.BtnNeutralHov : Theme.BtnNeutral);
+        var txt = primary ? Theme.BtnGoldText : Theme.BtnNeutralText;
+        if (disabled) { bg.W *= 0.4f; txt.W *= 0.55f; }
+
+        dl.AddRectFilled(pos, pos + size, ImGui.GetColorU32(bg), 4f);
+        var ts = Measure(_fMedium, PxMedium, label);
+        DrawText(dl, _fMedium, PxMedium, pos + (size - ts) * 0.5f,
+            ImGui.GetColorU32(txt), label);
     }
 
     // ── Map thumbnail ────────────────────────────────────────────────
