@@ -50,8 +50,9 @@ public class SpawnInfo
     // before it's publicly released. Normal public reports have it false.
     public bool IsScheduled { get; init; }
 
-    // Faloop's "scheduleDelay" — captured defensively (it's usually null/absent
-    // and its unit is unconfirmed). Surfaced next to PRE-RELEASE when present.
+    // Faloop's "scheduleDelay" — seconds between the report and its public
+    // release. The card counts down ReportedAt + ScheduleDelay, then the
+    // PRE-RELEASE flag flips to RELEASED. Null/absent = no delay (0).
     public int? ScheduleDelay { get; init; }
 
     public bool      IsDead   { get; set; }

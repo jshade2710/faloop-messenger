@@ -604,12 +604,19 @@ internal static class SpawnCardRenderer
             x = DrawClipped(dl, _fMedium, PxMedium, new Vector2(x, pos.Y), col, s, rightX - x);
         }
 
-        // Pre-release (Faloop "isScheduled") — leading amber flag so a
-        // scheduled report is obvious at a glance.
+        // Pre-release (Faloop "isScheduled"): only scheduled reports show this.
+        // Count down to the public-release moment (ReportedAt + scheduleDelay
+        // seconds) as "-Ns", then flip to RELEASED so the flag never goes
+        // stale. Other users without the permission just don't get these.
         if (spawn.IsScheduled)
         {
-            Seg(spawn.ScheduleDelay is { } d ? $"PRE-RELEASE +{d}" : "PRE-RELEASE",
-                ImGui.GetColorU32(Theme.Warn));
+            var until = spawn.ReportedAt
+                      + TimeSpan.FromSeconds(spawn.ScheduleDelay ?? 0)
+                      - TimeSync.ServerNow;
+            if (until > TimeSpan.Zero)
+                Seg($"PRE-RELEASE -{FormatAge(until)}", ImGui.GetColorU32(Theme.Warn));
+            else
+                Seg("RELEASED", ImGui.GetColorU32(Theme.PullReady));
             Sep();
         }
 
