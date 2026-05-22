@@ -584,6 +584,14 @@ internal static class SpawnCardRenderer
             x = DrawClipped(dl, new Vector2(x, pos.Y), col, s, rightX - x);
         }
 
+        // Pre-release (Faloop "isScheduled") — leading amber flag so a
+        // scheduled report is obvious at a glance.
+        if (spawn.IsScheduled)
+        {
+            Seg("PRE-RELEASE", ImGui.GetColorU32(Theme.Warn));
+            Sep();
+        }
+
         Seg(spawn.ZoneName, tertiary);
         Sep();
 

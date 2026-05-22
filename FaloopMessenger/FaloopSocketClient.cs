@@ -702,6 +702,7 @@ public class FaloopSocketClient : IDisposable
             ZonePoiId    = zonePoiId,
             Points       = points,
             IsSS         = mobInfo.Rank == MobRank.SS,
+            IsScheduled  = GetBool(spawnData, "isScheduled"),
             RawEvent     = mobData.GetRawText(),
         };
 
@@ -921,6 +922,9 @@ public class FaloopSocketClient : IDisposable
 
     private static string? GetString(JsonElement e, string key) =>
         e.TryGetProperty(key, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
+
+    private static bool GetBool(JsonElement e, string key) =>
+        e.TryGetProperty(key, out var p) && p.ValueKind == JsonValueKind.True;
 
     // ── Send helper ───────────────────────────────────────────────────
 

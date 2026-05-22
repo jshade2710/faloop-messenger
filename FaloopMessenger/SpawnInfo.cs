@@ -46,6 +46,10 @@ public class SpawnInfo
     // this can't make them vanish anywhere S-ranks are shown.
     public bool IsSS { get; init; }
 
+    // Faloop's "isScheduled" flag: a scheduled (pre-release) report — surfaced
+    // before it's publicly released. Normal public reports have it false.
+    public bool IsScheduled { get; init; }
+
     public bool      IsDead   { get; set; }
     public DateTime? KilledAt { get; set; }
 }
