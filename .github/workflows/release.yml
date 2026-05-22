@@ -14,6 +14,14 @@ on:
 permissions:
   contents: write
 
+env:
+  # GitHub is deprecating Node 20 actions (forced to Node 24 on 2026-06-02,
+  # removed 2026-09-16). This opts every JavaScript action onto Node 24 now;
+  # it becomes a harmless no-op once Node 24 is the runner default. (A
+  # reusable workflow doesn't inherit the caller's env, so validate.yml
+  # sets its own copy too.)
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   # Fail-fast: never build or publish a release on top of a broken
   # pluginmaster.json (reuses the standalone Validate workflow).
@@ -26,7 +34,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4

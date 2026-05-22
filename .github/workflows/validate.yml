@@ -14,12 +14,18 @@ on:
     paths: ['pluginmaster.json']
   workflow_call:        # reused by release.yml as a fail-fast pre-flight
 
+env:
+  # GitHub is deprecating Node 20 actions (forced to Node 24 on 2026-06-02,
+  # removed 2026-09-16). This opts every JavaScript action onto Node 24 now;
+  # it becomes a harmless no-op once Node 24 is the runner default.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   pluginmaster:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Validate pluginmaster.json
         shell: pwsh
