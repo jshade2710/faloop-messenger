@@ -50,6 +50,10 @@ public class SpawnInfo
     // before it's publicly released. Normal public reports have it false.
     public bool IsScheduled { get; init; }
 
+    // Faloop's "scheduleDelay" — captured defensively (it's usually null/absent
+    // and its unit is unconfirmed). Surfaced next to PRE-RELEASE when present.
+    public int? ScheduleDelay { get; init; }
+
     public bool      IsDead   { get; set; }
     public DateTime? KilledAt { get; set; }
 }

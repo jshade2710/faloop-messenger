@@ -353,7 +353,12 @@ public class ConfigWindow : Window, IDisposable
         if (ImGui.Button("Test##se-test"))
             Plugin.PlayChatSound(Config.SoundEffect);
 
-        Section("MINI WINDOW  (/faloopmini)");
+        Section("TRACKER POP-UP");
+
+        ImGui.TextWrapped(
+            "Applies to whichever tracker window you opened last — " +
+            "/faloop, /faloopmini or /faloopcompact.");
+        ImGui.Spacing();
 
         var autoOpen = Config.AutoOpenMiniOnSpawn;
         if (ImGui.Checkbox("Auto-open when an S-rank spawns", ref autoOpen))

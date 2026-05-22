@@ -588,7 +588,8 @@ internal static class SpawnCardRenderer
         // scheduled report is obvious at a glance.
         if (spawn.IsScheduled)
         {
-            Seg("PRE-RELEASE", ImGui.GetColorU32(Theme.Warn));
+            Seg(spawn.ScheduleDelay is { } d ? $"PRE-RELEASE +{d}" : "PRE-RELEASE",
+                ImGui.GetColorU32(Theme.Warn));
             Sep();
         }
 

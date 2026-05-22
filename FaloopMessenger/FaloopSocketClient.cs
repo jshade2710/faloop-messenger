@@ -703,6 +703,9 @@ public class FaloopSocketClient : IDisposable
             Points       = points,
             IsSS         = mobInfo.Rank == MobRank.SS,
             IsScheduled  = GetBool(spawnData, "isScheduled"),
+            ScheduleDelay = spawnData.TryGetProperty("scheduleDelay", out var sd) &&
+                            sd.ValueKind == JsonValueKind.Number &&
+                            sd.TryGetInt32(out var sdv) ? sdv : null,
             RawEvent     = mobData.GetRawText(),
         };
 

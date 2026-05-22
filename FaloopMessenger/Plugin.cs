@@ -164,10 +164,43 @@ public sealed class Plugin : IDalamudPlugin
             Condition[ConditionFlag.BoundByDuty95] ||
             Condition[ConditionFlag.InDeepDungeon]);
 
-    private void OnCommand(string command, string args)        => MainWindow.Toggle();
-    private void OnMiniCommand(string command, string args)    => MiniWindow.Toggle();
-    private void OnCompactCommand(string command, string args) => CompactWindow.Toggle();
-    public void ToggleMainUi()    => MainWindow.Toggle();
+    // Which tracker window the user most recently opened. The auto open/close
+    // on spawn targets THIS one — so if you live in /faloopcompact, the
+    // compact window is what pops and hides, not always the mini.
+    private enum Tracker { Main, Mini, Compact }
+    private Tracker _lastTracker = Tracker.Mini;
+
+    private Dalamud.Interface.Windowing.Window ActiveTracker() => _lastTracker switch
+    {
+        Tracker.Main    => MainWindow,
+        Tracker.Compact => CompactWindow,
+        _               => MiniWindow,
+    };
+
+    private void OnCommand(string command, string args)
+    {
+        MainWindow.Toggle();
+        if (MainWindow.IsOpen) _lastTracker = Tracker.Main;
+    }
+
+    private void OnMiniCommand(string command, string args)
+    {
+        MiniWindow.Toggle();
+        if (MiniWindow.IsOpen) _lastTracker = Tracker.Mini;
+    }
+
+    private void OnCompactCommand(string command, string args)
+    {
+        CompactWindow.Toggle();
+        if (CompactWindow.IsOpen) _lastTracker = Tracker.Compact;
+    }
+
+    public void ToggleMainUi()
+    {
+        MainWindow.Toggle();
+        if (MainWindow.IsOpen) _lastTracker = Tracker.Main;
+    }
+
     public void ToggleConfigUi()  => ConfigWindow.Toggle();
 
     // Tracks the previous live-S-rank count so we only auto-close on the
@@ -194,7 +227,7 @@ public sealed class Plugin : IDalamudPlugin
                     PlayChatSound(Configuration.SoundEffect);
 
                 if (Configuration.AutoOpenMiniOnSpawn && spawn.Rank == HuntRank.S)
-                    MiniWindow.IsOpen = true;
+                    ActiveTracker().IsOpen = true;
             }
             catch (System.Exception ex)
             {
@@ -217,7 +250,7 @@ public sealed class Plugin : IDalamudPlugin
                     if (!s.IsDead && s.Rank == HuntRank.S) live++;
 
                 if (Configuration.AutoCloseMiniWhenIdle && _lastLiveSCount > 0 && live == 0)
-                    MiniWindow.IsOpen = false;
+                    ActiveTracker().IsOpen = false;
 
                 _lastLiveSCount = live;
             }
