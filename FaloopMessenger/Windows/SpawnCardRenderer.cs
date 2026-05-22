@@ -118,6 +118,10 @@ internal static class SpawnCardRenderer
                 return;
             }
 
+            // "{}" — copy this spawn's raw Faloop JSON.
+            if (DrawRawButton(origin, StdStripeWidth + 22f, 4f, spawnKey, dl))
+                OutputRawJson(spawn);
+
             // Rank = accent identity ONLY (stripe + badge), vertically centred
             // and enlarged so "S" reads at a glance.
             var badgeCenter = new Vector2(
@@ -230,6 +234,9 @@ internal static class SpawnCardRenderer
                 return;
             }
 
+            if (DrawRawButton(origin, CmpStripeWidth + 19f, 2f, spawnKey, dl))
+                OutputRawJson(spawn);
+
             var badgeCenter = new Vector2(
                 origin.X + CmpStripeWidth + 8f + CmpBadgeRadius, origin.Y + CmpCardHeight / 2f);
             DrawRankBadge(badgeCenter, CmpBadgeRadius,
@@ -327,6 +334,43 @@ internal static class SpawnCardRenderer
                 ImGui.TextUnformatted("Remove this spawn");
         }
         return clicked;
+    }
+
+    // Small "{}" button — clicked, copies this spawn's full raw Faloop JSON.
+    private static bool DrawRawButton(Vector2 origin, float dx, float dy,
+                                      long spawnKey, ImDrawListPtr dl)
+    {
+        const float size = 16f;
+        var p = new Vector2(origin.X + dx, origin.Y + dy);
+        ImGui.SetCursorScreenPos(p);
+        ImGui.InvisibleButton($"##raw_{spawnKey}", new Vector2(size, size));
+        var hovered = ImGui.IsItemHovered();
+        var clicked = ImGui.IsItemClicked();
+
+        var col = hovered ? 0xFFFFFFFFu : 0x70AAAAAAu;
+        var ts  = ImGui.CalcTextSize("{}");
+        dl.AddText(p + (new Vector2(size, size) - ts) * 0.5f, col, "{}");
+
+        if (hovered)
+            using (ImRaii.Tooltip())
+                ImGui.TextUnformatted("Copy this spawn's raw Faloop JSON");
+        return clicked;
+    }
+
+    // Copy the raw event JSON to the clipboard and mirror it to the log, so a
+    // spawn's exact Faloop payload can be inspected (e.g. for pre-release).
+    private static void OutputRawJson(SpawnInfo spawn)
+    {
+        var json = string.IsNullOrEmpty(spawn.RawEvent)
+            ? "(no raw event captured for this spawn)"
+            : spawn.RawEvent;
+        try { ImGui.SetClipboardText(json); }
+        catch (Exception ex) { Plugin.Log.Warning($"[Faloop] Clipboard copy failed: {ex.Message}"); }
+
+        Plugin.Log.Information($"[Faloop] Raw JSON — {spawn.MobName} on {spawn.World}:\n{json}");
+        Plugin.ChatGui.Print(
+            $"[FaloopMessenger] Raw JSON for {spawn.MobName} copied to clipboard " +
+            $"({json.Length} chars). Full text is also in the plugin log.");
     }
 
     private static void DrawRankBadge(Vector2 center, float radius, string label,
