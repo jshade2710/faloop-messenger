@@ -273,13 +273,18 @@ public class ConfigWindow : Window, IDisposable
             "thumbnail, gaps — together. 100% is the design size.");
         ImGui.Spacing();
 
-        var scale = Config.UiScale;
+        // Slider value in whole-percent units, so the printf format "%d%%"
+        // updates live while dragging (a C# interpolated string would render
+        // as a static label and freeze the on-slider readout). Smooth 1%
+        // steps; we only Save() on release to avoid hammering the config
+        // file on every drag frame.
+        var pct = Math.Clamp((int)MathF.Round(Config.UiScale * 100f), 80, 150);
         ImGui.SetNextItemWidth(260f);
-        if (ImGui.SliderFloat("##uiscale", ref scale, 0.8f, 1.5f, $"{scale * 100f:F0}%"))
-        {
-            Config.UiScale = MathF.Round(MathF.Max(0.8f, MathF.Min(1.5f, scale)) * 20f) / 20f; // snap to 5%
+        if (ImGui.SliderInt("##uiscale", ref pct, 80, 150, "%d%%"))
+            Config.UiScale = pct / 100f;
+        if (ImGui.IsItemDeactivatedAfterEdit())
             Config.Save();
-        }
+
         ImGui.SameLine(0, 8f);
         if (ImGui.SmallButton("Reset##uiscale"))
         {
