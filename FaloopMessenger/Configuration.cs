@@ -68,6 +68,12 @@ public class Configuration : IPluginConfiguration
     public PingChannel PingChannel    { get; set; } = PingChannel.Echo;
     public bool        HideInInstance { get; set; } = false;
 
+    // UI scale for the spawn cards — multiplies every fixed pixel constant
+    // (font sizes, card height, badges, buttons, paddings, gaps, marker
+    // sizes), so the card grows/shrinks proportionally. 1.0 = design size.
+    // Clamped to 0.8 – 1.5 in the renderer.
+    public float UiScale { get; set; } = 1.0f;
+
     // Hunt-train pull timer: how many real-time minutes after a spawn is
     // reported before it's customary to pull. Shown as a countdown on the
     // card, flipping to "PULL" when elapsed. 0 disables the timer.

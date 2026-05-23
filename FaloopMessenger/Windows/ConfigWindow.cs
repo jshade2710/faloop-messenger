@@ -47,6 +47,7 @@ public class ConfigWindow : Window, IDisposable
 
         Tab("Account",       DrawAccountTab);
         Tab("Filters",       DrawFiltersTab);
+        Tab("Appearance",    DrawAppearanceTab);
         Tab("Notifications", DrawNotificationsTab);
         Tab("Advanced",      DrawAdvancedTab);
     }
@@ -246,8 +247,8 @@ public class ConfigWindow : Window, IDisposable
             v  => Config.ExpansionFilterEnabled = v,
             Config.ExpansionWhitelist);
 
-        // ── HUNTS ─────────────────────────────────────────────────────
-        Section("HUNTS");
+        // ── RANK ──────────────────────────────────────────────────────
+        Section("RANK");
 
         var onlyS = Config.OnlySRanks;
         if (ImGui.Checkbox("Show S-ranks only", ref onlyS))
@@ -259,19 +260,34 @@ public class ConfigWindow : Window, IDisposable
         ImGui.TextDisabled("(?)");
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("When off, A and B ranks are tracked too (still DC/world/expansion filtered).");
+    }
 
+    // ── Appearance ───────────────────────────────────────────────────
+
+    private void DrawAppearanceTab()
+    {
+        Section("CARD SIZE");
+
+        ImGui.TextWrapped(
+            "Scales the whole spawn card — fonts, height, badges, buttons, " +
+            "thumbnail, gaps — together. 100% is the design size.");
         ImGui.Spacing();
-        ImGui.TextColored(Theme.Muted, "Max entries kept");
-        ImGui.SetNextItemWidth(80f);
-        var max = Config.MaxEntries;
-        if (ImGui.InputInt("##max", ref max))
+
+        var scale = Config.UiScale;
+        ImGui.SetNextItemWidth(260f);
+        if (ImGui.SliderFloat("##uiscale", ref scale, 0.8f, 1.5f, $"{scale * 100f:F0}%"))
         {
-            Config.MaxEntries = Math.Clamp(max, 10, 500);
+            Config.UiScale = MathF.Round(MathF.Max(0.8f, MathF.Min(1.5f, scale)) * 20f) / 20f; // snap to 5%
+            Config.Save();
+        }
+        ImGui.SameLine(0, 8f);
+        if (ImGui.SmallButton("Reset##uiscale"))
+        {
+            Config.UiScale = 1.0f;
             Config.Save();
         }
 
-        // ── DISPLAY ───────────────────────────────────────────────────
-        Section("DISPLAY");
+        Section("BEHAVIOUR");
 
         var hideInst = Config.HideInInstance;
         if (ImGui.Checkbox("Hide tracker windows in instanced duties", ref hideInst))
@@ -303,11 +319,24 @@ public class ConfigWindow : Window, IDisposable
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(
                 "Hunt-train convention: wait this many real-time minutes after a\n" +
-                "spawn is reported before pulling. The card shows a countdown\n" +
-                "(\"pull in 1m23s · 07:30 ET\", amber) — the ET value is the\n" +
-                "Eorzean clock time the pull is due, so you can watch the in-game\n" +
-                "clock. It flips to a green \"PULL\" when the wait is up. Set to 0\n" +
-                "to hide the timer entirely.");
+                "spawn is reported before pulling. The card shows an ET timer\n" +
+                "that flips to PULL when the wait is up. Set to 0 to hide it.");
+
+        ImGui.Spacing();
+        ImGui.TextColored(Theme.Muted, "Max entries kept");
+        ImGui.SetNextItemWidth(80f);
+        var max = Config.MaxEntries;
+        if (ImGui.InputInt("##max", ref max))
+        {
+            Config.MaxEntries = Math.Clamp(max, 10, 500);
+            Config.Save();
+        }
+        ImGui.SameLine(0, 6f);
+        ImGui.TextDisabled("(?)");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(
+                "How many spawns to retain (live + recently killed combined).\n" +
+                "Older entries fall off the bottom of the list.");
     }
 
     // Consistent section divider used across the tabs.
@@ -374,27 +403,33 @@ public class ConfigWindow : Window, IDisposable
             Config.Save();
         }
 
-        Section("PING BUTTON");
-
-        ImGui.TextWrapped(
-            "Ping prints a clickable map link to your local Echo chat. " +
-            "Click the map thumbnail on a card to plant the in-game flag.");
         ImGui.Spacing();
         ImGui.TextColored(Theme.Muted,
-            "Sending to other channels (party / yell / etc.) requires game " +
-            "chat-send infrastructure that isn't implemented yet.");
+            "Ping prints to your local Echo only — sending to other channels " +
+            "requires game chat-send infrastructure that isn't implemented yet.");
+    }
 
-        Section("TP BUTTON");
+    // ── Advanced ─────────────────────────────────────────────────────
+
+    private void DrawAdvancedTab()
+    {
+        Section("CONNECTION");
+
+        ImGui.TextColored(Theme.Muted, "Socket URL");
+        var url = Config.SocketUrl;
+        ImGui.SetNextItemWidth(-1f);
+        if (ImGui.InputText("##url", ref url, 512))
+        {
+            Config.SocketUrl = url;
+            Config.Save();
+        }
+
+        Section("LIFESTREAM (TP button)");
 
         ImGui.TextWrapped(
-            "TP uses Lifestream to switch worlds (if needed) and teleport to " +
-            "the closest aetheryte. Faloop's route data tells us when to " +
-            "teleport to an adjacent zone's aetheryte instead (e.g. → " +
-            "Idyllshire to walk into The Dravanian Hinterlands).");
-        ImGui.Spacing();
-        ImGui.TextColored(Theme.Warn,
-            "The TP button requires the Lifestream plugin to be installed " +
-            "and enabled. Without it the button does nothing.");
+            "The TP button uses Lifestream to switch worlds and teleport to " +
+            "the nearest aetheryte. The plugin will work fine without it — " +
+            "TP is just disabled.");
         ImGui.Spacing();
 
         ImGui.TextColored(Theme.Muted, "Install Lifestream:");
@@ -407,24 +442,10 @@ public class ConfigWindow : Window, IDisposable
         if (ImGui.SmallButton("Copy URL##copyrepo"))
             ImGui.SetClipboardText("https://love.puni.sh/ment.json");
         ImGui.SameLine(0, 8f);
-        if (ImGui.SmallButton("Open Lifestream on GitHub"))
+        if (ImGui.SmallButton("Open on GitHub"))
             Dalamud.Utility.Util.OpenLink("https://github.com/NightmareXIV/Lifestream");
         ImGui.Unindent(20f);
         ImGui.BulletText("Save & close, then install \"Lifestream\" from the plugin list.");
-    }
-
-    // ── Advanced ─────────────────────────────────────────────────────
-
-    private void DrawAdvancedTab()
-    {
-        ImGui.TextColored(Theme.Muted, "Socket URL");
-        var url = Config.SocketUrl;
-        ImGui.SetNextItemWidth(-1f);
-        if (ImGui.InputText("##url", ref url, 512))
-        {
-            Config.SocketUrl = url;
-            Config.Save();
-        }
 
         Section("TROUBLESHOOTING");
 
@@ -432,5 +453,9 @@ public class ConfigWindow : Window, IDisposable
             "If the tracker stays blank after connecting, enable Verbose logging");
         ImGui.TextColored(Theme.Muted,
             "in Dalamud settings and search the log for [Faloop] to see live events.");
+        ImGui.Spacing();
+        ImGui.TextColored(Theme.Muted,
+            "Each spawn card has a small \"{}\" button — clicking it copies that\n" +
+            "spawn's raw Faloop JSON to your clipboard for inspection.");
     }
 }

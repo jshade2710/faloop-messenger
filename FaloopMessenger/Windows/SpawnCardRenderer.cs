@@ -18,31 +18,38 @@ internal static class SpawnCardRenderer
     // All colour constants live in Theme.cs.
 
     // ── Layout constants ──────────────────────────────────────────────
-    // Redesigned card: world is the title, the pull timer gets a dedicated
-    // right-side panel, actions sit on their own bottom row with one primary.
-    private const float StdCardHeight   = 120f;
-    private const float StdCardPad      = 10f;
-    private const float StdStripeWidth  = 4f;
-    private const float StdBadgeRadius  = 23f;
-    private const float StdColW         = 86f;    // fixed right column (chip + buttons)
-    private const float StdChipH        = 26f;    // minimal timer chip (≈half the old panel)
-    private const float StdBtnH         = 22f;
-    private const float StdBtnGap       = 5f;
-    private const float StdMapTarget    = 100f;   // map ≈ card-height square (pre-redesign feel)
-    private const float StdMapMin       = 56f;    // below this the map collapses entirely
-    private const float StdTextMin      = 196f;   // text never starved below this
+    // All pixel constants flow through Scale (Configuration.UiScale, clamped
+    // 0.8–1.5), so the entire card grows/shrinks proportionally — fonts,
+    // heights, paddings, badges, buttons, markers, gaps. Inline pixel offsets
+    // throughout the renderer go through the `S(v)` helper for the same
+    // reason. Fractions (ThumbZoom) and time (FadeMs) are scale-free.
+    internal static float Scale =>
+        Math.Clamp(Plugin.Config?.UiScale ?? 1f, 0.8f, 1.5f);
+    private static float S(float v) => v * Scale;
 
-    private const float CmpCardHeight   = 70f;
-    private const float CmpCardPad      = 7f;
-    private const float CmpStripeWidth  = 3f;
-    private const float CmpBadgeRadius  = 13f;
-    private const float CmpButtonW      = 56f;
-    private const float CmpBtnH         = 22f;
-    private const float CmpBtnGap       = 4f;
+    private static float StdCardHeight   => 120f * Scale;
+    private static float StdCardPad      => 10f  * Scale;
+    private static float StdStripeWidth  => 4f   * Scale;
+    private static float StdBadgeRadius  => 23f  * Scale;
+    private static float StdColW         => 86f  * Scale;
+    private static float StdChipH        => 26f  * Scale;
+    private static float StdBtnH         => 22f  * Scale;
+    private static float StdBtnGap       => 5f   * Scale;
+    private static float StdMapTarget    => 100f * Scale;
+    private static float StdMapMin       => 56f  * Scale;
+    private static float StdTextMin      => 196f * Scale;
 
-    private const float CardRound       = 6f;
-    private const float ThumbZoom       = 0.25f;   // fraction of texture to show
-    private const float FadeMs          = 600f;    // intro flash duration
+    private static float CmpCardHeight   => 70f * Scale;
+    private static float CmpCardPad      => 7f  * Scale;
+    private static float CmpStripeWidth  => 3f  * Scale;
+    private static float CmpBadgeRadius  => 13f * Scale;
+    private static float CmpButtonW      => 56f * Scale;
+    private static float CmpBtnH         => 22f * Scale;
+    private static float CmpBtnGap       => 4f  * Scale;
+
+    private static float CardRound       => 6f * Scale;
+    private const  float ThumbZoom       = 0.25f;   // fraction of texture
+    private const  float FadeMs          = 600f;    // intro flash duration (ms)
 
     // ── Fixed-size text ───────────────────────────────────────────────
     // The card is pixel-static regardless of Dalamud's global font scale:
@@ -50,9 +57,11 @@ internal static class SpawnCardRenderer
     // overload, which renders at exactly the given px (the global scale
     // only affects the *implicit* current-font size). Fonts are locked
     // once per DrawCard to obtain their ImFontPtr.
-    private const float PxWorld  = 28f;
-    private const float PxTitle  = 22f;
-    private const float PxMedium = 16f;
+    // Base medium bumped 16 → 18 for comfortable default readability;
+    // every Px* scales with the user UI scale just like layout.
+    private static float PxWorld   => 28f * Scale;
+    private static float PxTitle   => 22f * Scale;
+    private static float PxMedium  => 18f * Scale;
 
     private static ImFontPtr _fWorld, _fTitle, _fMedium;
 
@@ -90,7 +99,7 @@ internal static class SpawnCardRenderer
         using var lm = Plugin.FontMedium.Lock();
         _fMedium = lm.ImFont;
 
-        const float DeadH = 30f;
+        var DeadH = S(30f);
         var origin = ImGui.GetCursorScreenPos();
         var width  = ImGui.GetContentRegionAvail().X;
         var dl     = ImGui.GetWindowDrawList();
@@ -100,9 +109,9 @@ internal static class SpawnCardRenderer
         dl.AddRectFilled(origin, origin + new Vector2(StdStripeWidth, DeadH),
             ImGui.GetColorU32(Theme.Muted), CardRound);
 
-        var badgeC = new Vector2(origin.X + StdStripeWidth + 14f, origin.Y + DeadH / 2f);
+        var badgeC = new Vector2(origin.X + StdStripeWidth + S(14f), origin.Y + DeadH / 2f);
         var mutedU = ImGui.GetColorU32(Theme.Muted);
-        dl.AddCircle(badgeC, 8f, mutedU, 0, 1.5f);
+        dl.AddCircle(badgeC, S(8f), mutedU, 0, 1.5f);
         var xs = Measure(_fMedium, PxMedium, "✗");
         DrawText(dl, _fMedium, PxMedium, badgeC - xs * 0.5f, mutedU, "✗");
 
@@ -115,7 +124,7 @@ internal static class SpawnCardRenderer
         var text = string.Join("  ·  ", parts);
 
         var textY = origin.Y + (DeadH - PxMedium) / 2f;
-        DrawText(dl, _fMedium, PxMedium, new Vector2(badgeC.X + 14f, textY),
+        DrawText(dl, _fMedium, PxMedium, new Vector2(badgeC.X + S(14f), textY),
             ImGui.GetColorU32(Theme.TextTertiary), text);
 
         ImGui.Dummy(new Vector2(width, DeadH));
@@ -146,7 +155,7 @@ internal static class SpawnCardRenderer
 
             // × dismiss (top-left, just inside the stripe — kept here per an
             // earlier explicit request).
-            if (DrawCloseButton(origin, StdStripeWidth + 4f, 5f, 14f, spawnKey, dl))
+            if (DrawCloseButton(origin, StdStripeWidth + S(4f), S(5f), S(14f), spawnKey, dl))
             {
                 client.RemoveSpawn(spawn);
                 _firstRenderAt.Remove(spawnKey);
@@ -155,13 +164,13 @@ internal static class SpawnCardRenderer
             }
 
             // "{}" — copy this spawn's raw Faloop JSON.
-            if (DrawRawButton(origin, StdStripeWidth + 22f, 4f, spawnKey, dl))
+            if (DrawRawButton(origin, StdStripeWidth + S(22f), S(4f), spawnKey, dl))
                 OutputRawJson(spawn);
 
             // Rank = accent identity ONLY (stripe + badge), vertically centred
             // and enlarged so "S" reads at a glance.
             var badgeCenter = new Vector2(
-                origin.X + StdStripeWidth + 11f + StdBadgeRadius,
+                origin.X + StdStripeWidth + S(11f) + StdBadgeRadius,
                 origin.Y + StdCardHeight / 2f);
             DrawRankBadge(badgeCenter, StdBadgeRadius,
                 spawn.IsSS ? "SS" : spawn.Rank.ToString(),
@@ -169,24 +178,24 @@ internal static class SpawnCardRenderer
 
             // ── Fixed right column: minimal timer chip + 3 buttons ─────
             var pull = PullState(spawn);
-            var colX = origin.X + width - 8f - StdColW;
+            var colX = origin.X + width - S(8f) - StdColW;
 
             var btnTotalH = StdBtnH * 3f + StdBtnGap * 2f;
-            var stackH    = pull.Enabled ? StdChipH + 8f + btnTotalH : btnTotalH;
+            var stackH    = pull.Enabled ? StdChipH + S(8f) + btnTotalH : btnTotalH;
             var colY      = origin.Y + (StdCardHeight - stackH) / 2f;
 
             if (pull.Enabled)
             {
                 DrawTimerChip(dl, new Vector2(colX, colY), new Vector2(StdColW, StdChipH),
                               pull, spawnKey);
-                colY += StdChipH + 8f;
+                colY += StdChipH + S(8f);
             }
             DrawActionButtonsStacked(dl, spawn, colX, colY, StdColW, StdBtnH, StdBtnGap, spawnKey);
 
             // ── Fluid columns: text has a floor + grows; the map is the
             //    elastic element (shrinks, then collapses on a narrow window).
-            var textX     = origin.X + StdStripeWidth + 13f + StdBadgeRadius * 2f + 16f;
-            var regionR   = colX - 10f;
+            var textX     = origin.X + StdStripeWidth + S(13f) + StdBadgeRadius * 2f + S(16f);
+            var regionR   = colX - S(10f);
             var room      = regionR - (textX + StdTextMin);   // space available to the map
             var mapS      = MathF.Min(StdMapTarget, MathF.Min(room, StdCardHeight - 2f * StdCardPad));
             if (mapS < StdMapMin) mapS = 0f;                   // collapse breakpoint
@@ -197,7 +206,7 @@ internal static class SpawnCardRenderer
                 var mapX = regionR - mapS;
                 DrawMapThumb(spawn,
                     new Vector2(mapX, origin.Y + (StdCardHeight - mapS) / 2f), mapS);
-                textRight = mapX - 12f;
+                textRight = mapX - S(12f);
             }
             else
             {
@@ -210,21 +219,21 @@ internal static class SpawnCardRenderer
             // Row 1 — WORLD (title) + instance badge
             {
                 var badgeW = spawn.ZoneInstance > 0
-                    ? MeasureInstanceBadge(spawn.ZoneInstance) + 10f
+                    ? MeasureInstanceBadge(spawn.ZoneInstance) + S(10f)
                     : 0f;
                 var endX = DrawClipped(dl, _fWorld, PxWorld, new Vector2(textX, y),
                     ImGui.GetColorU32(Theme.TextPrimary), spawn.World,
                     textRight - textX - badgeW);
                 if (spawn.ZoneInstance > 0)
-                    DrawInstanceBadge(dl, new Vector2(endX + 10f, y + 6f), spawn.ZoneInstance);
-                y += PxWorld + 1f;
+                    DrawInstanceBadge(dl, new Vector2(endX + S(10f), y + S(6f)), spawn.ZoneInstance);
+                y += PxWorld + S(1f);
             }
 
             // Row 2 — mob name (secondary)
             DrawClipped(dl, _fMedium, PxMedium, new Vector2(textX, y),
                 ImGui.GetColorU32(Theme.TextSecondary), spawn.MobName,
                 textRight - textX);
-            y += PxMedium + 4f;
+            y += PxMedium + S(4f);
 
             // Row 3 — meta strip (priority-degrading; clips the live segment)
             y = DrawMetaRow(dl, spawn, fresh, new Vector2(textX, y), textRight);
@@ -233,7 +242,7 @@ internal static class SpawnCardRenderer
             DrawRouteHintClipped(spawn, new Vector2(textX, y), dl, textRight - textX);
         }
 
-        ImGui.SetCursorScreenPos(origin + new Vector2(0f, StdCardHeight + 6f));
+        ImGui.SetCursorScreenPos(origin + new Vector2(0f, StdCardHeight + S(6f)));
     }
 
     // ── Compact 64 px card ───────────────────────────────────────────
@@ -258,7 +267,7 @@ internal static class SpawnCardRenderer
             dl.AddRectFilled(origin, origin + new Vector2(CmpStripeWidth, CmpCardHeight),
                 rankU32, CardRound);
 
-            if (DrawCloseButton(origin, CmpStripeWidth + 3f, 3f, 12f, spawnKey, dl))
+            if (DrawCloseButton(origin, CmpStripeWidth + S(3f), S(3f), S(12f), spawnKey, dl))
             {
                 client.RemoveSpawn(spawn);
                 _firstRenderAt.Remove(spawnKey);
@@ -266,11 +275,11 @@ internal static class SpawnCardRenderer
                 return;
             }
 
-            if (DrawRawButton(origin, CmpStripeWidth + 19f, 2f, spawnKey, dl))
+            if (DrawRawButton(origin, CmpStripeWidth + S(19f), S(2f), spawnKey, dl))
                 OutputRawJson(spawn);
 
             var badgeCenter = new Vector2(
-                origin.X + CmpStripeWidth + 8f + CmpBadgeRadius, origin.Y + CmpCardHeight / 2f);
+                origin.X + CmpStripeWidth + S(8f) + CmpBadgeRadius, origin.Y + CmpCardHeight / 2f);
             DrawRankBadge(badgeCenter, CmpBadgeRadius,
                 spawn.IsSS ? "SS" : spawn.Rank.ToString(),
                 rankU32, fresh, dl, useTitleFont: false);
@@ -279,17 +288,17 @@ internal static class SpawnCardRenderer
             // timer chip on the right, then the buttons.
             var pull   = PullState(spawn);
             var btnW   = CmpButtonW * 3 + CmpBtnGap * 2;
-            var chipW  = pull.Enabled ? 78f : 0f;   // fits "ET HH:MM"
-            var chipX  = origin.X + width - 8f - chipW;
-            var btnX0  = chipX - (pull.Enabled ? 10f : 0f) - btnW;
+            var chipW  = pull.Enabled ? S(78f) : 0f;   // fits "ET HH:MM"
+            var chipX  = origin.X + width - S(8f) - chipW;
+            var btnX0  = chipX - (pull.Enabled ? S(10f) : 0f) - btnW;
 
             if (pull.Enabled)
                 DrawTimerChip(dl,
-                    new Vector2(chipX, origin.Y + (CmpCardHeight - 24f) / 2f),
-                    new Vector2(chipW, 24f), pull, spawnKey);
+                    new Vector2(chipX, origin.Y + (CmpCardHeight - S(24f)) / 2f),
+                    new Vector2(chipW, S(24f)), pull, spawnKey);
 
-            var textX     = origin.X + CmpStripeWidth + 8f + CmpBadgeRadius * 2f + 12f;
-            var textRight = btnX0 - 12f;
+            var textX     = origin.X + CmpStripeWidth + S(8f) + CmpBadgeRadius * 2f + S(12f);
+            var textRight = btnX0 - S(12f);
             var y         = origin.Y + CmpCardPad;
 
             // Row 1 — WORLD (title) + instance badge + trailing mob name,
@@ -298,16 +307,16 @@ internal static class SpawnCardRenderer
                 var cursorX = DrawClipped(dl, _fMedium, PxMedium, new Vector2(textX, y),
                     ImGui.GetColorU32(Theme.TextPrimary), spawn.World,
                     (textRight - textX) * 0.55f);
-                cursorX += 8f;
+                cursorX += S(8f);
                 if (spawn.ZoneInstance > 0)
                 {
-                    cursorX = DrawInstanceBadge(dl, new Vector2(cursorX, y + 1f),
-                        spawn.ZoneInstance) + 8f;
+                    cursorX = DrawInstanceBadge(dl, new Vector2(cursorX, y + S(1f)),
+                        spawn.ZoneInstance) + S(8f);
                 }
-                DrawClipped(dl, _fMedium, PxMedium, new Vector2(cursorX, y + 2f),
+                DrawClipped(dl, _fMedium, PxMedium, new Vector2(cursorX, y + S(2f)),
                     ImGui.GetColorU32(Theme.TextSecondary), spawn.MobName,
                     textRight - cursorX);
-                y += PxMedium + 4f;
+                y += PxMedium + S(4f);
             }
 
             // Row 2 — meta strip (same builder as the standard card)
@@ -318,7 +327,7 @@ internal static class SpawnCardRenderer
             DrawActionButtonsCompact(dl, spawn, btnX0, aBtnY, spawnKey);
         }
 
-        ImGui.SetCursorScreenPos(origin + new Vector2(0f, CmpCardHeight + 4f));
+        ImGui.SetCursorScreenPos(origin + new Vector2(0f, CmpCardHeight + S(4f)));
     }
 
     // ── Shared helpers ────────────────────────────────────────────────
@@ -356,8 +365,9 @@ internal static class SpawnCardRenderer
 
         var col = hovered ? 0xFFFFFFFF : 0x66888888u;
         var cc  = closePos + new Vector2(size / 2f);
-        dl.AddLine(cc + new Vector2(-3f, -3f), cc + new Vector2(3f,  3f), col, 1.5f);
-        dl.AddLine(cc + new Vector2(-3f,  3f), cc + new Vector2(3f, -3f), col, 1.5f);
+        var d   = S(3f);
+        dl.AddLine(cc + new Vector2(-d, -d), cc + new Vector2(d,  d), col, 1.5f);
+        dl.AddLine(cc + new Vector2(-d,  d), cc + new Vector2(d, -d), col, 1.5f);
 
         if (hovered)
         {
@@ -371,7 +381,7 @@ internal static class SpawnCardRenderer
     private static bool DrawRawButton(Vector2 origin, float dx, float dy,
                                       long spawnKey, ImDrawListPtr dl)
     {
-        const float size = 16f;
+        var size = S(16f);
         var p = new Vector2(origin.X + dx, origin.Y + dy);
         ImGui.SetCursorScreenPos(p);
         ImGui.InvisibleButton($"##raw_{spawnKey}", new Vector2(size, size));
@@ -411,7 +421,7 @@ internal static class SpawnCardRenderer
         if (fresh)
         {
             var pulse = 0.5f + 0.5f * MathF.Sin((float)(Environment.TickCount64 / 220.0));
-            var glowR = radius + 4f + 3f * pulse;
+            var glowR = radius + S(4f) + S(3f) * pulse;
             var glowA = (uint)(0x40 + 0x40 * pulse) << 24 | (rankU32 & 0x00FFFFFF);
             dl.AddCircleFilled(center, glowR, glowA);
         }
@@ -428,7 +438,7 @@ internal static class SpawnCardRenderer
     // Small high-contrast "i2" pill next to the world title. Manages its own
     // (medium) font so it stays small even when the caller pushed FontTitle.
     // Returns the pill's right-edge X.
-    private static readonly Vector2 InstancePad = new(7f, 2f);
+    private static Vector2 InstancePad => new(S(7f), S(2f));
 
     private static float MeasureInstanceBadge(int instance)
         => Measure(_fMedium, PxMedium, $"i{instance}").X + InstancePad.X * 2f;
@@ -438,7 +448,7 @@ internal static class SpawnCardRenderer
         var label = $"i{instance}";
         var ts    = Measure(_fMedium, PxMedium, label);
         var max   = topLeft + ts + InstancePad * 2f;
-        dl.AddRectFilled(topLeft, max, ImGui.GetColorU32(Theme.InstanceBg), 4f);
+        dl.AddRectFilled(topLeft, max, ImGui.GetColorU32(Theme.InstanceBg), S(4f));
         DrawText(dl, _fMedium, PxMedium, topLeft + InstancePad,
             ImGui.GetColorU32(Theme.InstanceText), label);
         return max.X;
@@ -546,13 +556,13 @@ internal static class SpawnCardRenderer
         if (p.Ready)
         {
             var fill = new Vector4(accent.X, accent.Y, accent.Z, pulse);
-            dl.AddRectFilled(pos, max, ImGui.GetColorU32(fill), 5f);
+            dl.AddRectFilled(pos, max, ImGui.GetColorU32(fill), S(5f));
         }
         else
         {
-            dl.AddRectFilled(pos, max, ImGui.GetColorU32(Theme.PullPanelBg), 5f);
+            dl.AddRectFilled(pos, max, ImGui.GetColorU32(Theme.PullPanelBg), S(5f));
             var border = new Vector4(accent.X, accent.Y, accent.Z, pulse);
-            dl.AddRect(pos, max, ImGui.GetColorU32(border), 5f, 0, 1.3f);
+            dl.AddRect(pos, max, ImGui.GetColorU32(border), S(5f), 0, 1.3f);
         }
 
         {
@@ -626,10 +636,10 @@ internal static class SpawnCardRenderer
         // Freshness dot: filled = fresh, hollow ring = stale.
         if (x <= rightX)
         {
-            var c = new Vector2(x + 4f, midY);
-            if (fresh) dl.AddCircleFilled(c, 4f, ImGui.GetColorU32(Theme.AgeFresh));
-            else       dl.AddCircle(c, 4f, tertiary, 0, 1.4f);
-            x += 13f;
+            var c = new Vector2(x + S(4f), midY);
+            if (fresh) dl.AddCircleFilled(c, S(4f), ImGui.GetColorU32(Theme.AgeFresh));
+            else       dl.AddCircle(c, S(4f), tertiary, 0, 1.4f);
+            x += S(13f);
         }
         Seg(FormatAge(TimeSync.ServerNow - spawn.ReportedAt),
             fresh ? ImGui.GetColorU32(Theme.AgeFresh) : tertiary);
@@ -645,7 +655,7 @@ internal static class SpawnCardRenderer
             Seg($"by {spawn.Reporter}", tertiary);
         }
 
-        return pos.Y + PxMedium + 4f;
+        return pos.Y + PxMedium + S(4f);
     }
 
     private static string MmSs(TimeSpan t)
@@ -720,7 +730,7 @@ internal static class SpawnCardRenderer
         var txt = primary ? Theme.BtnGoldText : Theme.BtnNeutralText;
         if (disabled) { bg.W *= 0.4f; txt.W *= 0.55f; }
 
-        dl.AddRectFilled(pos, pos + size, ImGui.GetColorU32(bg), 4f);
+        dl.AddRectFilled(pos, pos + size, ImGui.GetColorU32(bg), S(4f));
         var ts = Measure(_fMedium, PxMedium, label);
         DrawText(dl, _fMedium, PxMedium, pos + (size - ts) * 0.5f,
             ImGui.GetColorU32(txt), label);
@@ -774,11 +784,11 @@ internal static class SpawnCardRenderer
             TeleportRoutine.SetFlag(spawn);
 
         dl.AddImageRounded(wrap.Handle, pos, pos + new Vector2(size, size),
-            uvMin, uvMax, 0xFFFFFFFF, 4f);
+            uvMin, uvMax, 0xFFFFFFFF, S(4f));
 
         if (thumbHovered)
         {
-            dl.AddRect(pos, pos + new Vector2(size, size), 0xFF40D9FF, 4f, 0, 1.5f);
+            dl.AddRect(pos, pos + new Vector2(size, size), 0xFF40D9FF, S(4f), 0, 1.5f);
             if (spawn.TerritoryId > 0)
                 using (ImRaii.Tooltip())
                     ImGui.TextUnformatted("Click to place a map flag");
@@ -798,13 +808,13 @@ internal static class SpawnCardRenderer
             var pulse = 0.5f + 0.5f * MathF.Sin((float)(Environment.TickCount64 / 240.0));
             void Dot(Vector2 m, float k)
             {
-                var haloR = (11f + 3.5f * pulse) * k;
+                var haloR = (S(11f) + S(3.5f) * pulse) * k;
                 var haloA = (byte)(0x30 + 0x40 * (1f - pulse));
                 dl.AddCircleFilled(m, haloR, ((uint)haloA << 24) | 0x0040DAFFu);
-                dl.AddCircleFilled(m + new Vector2(0.5f, 1f), 6.5f * k, 0x55000000);
-                dl.AddCircleFilled(m, 6f * k, 0xFF40DAFFu);
-                dl.AddCircle      (m, 6f * k, 0xC0202830u, 0, 1.5f);
-                dl.AddCircleFilled(m, 2f * k, 0xFFFFFFFFu);
+                dl.AddCircleFilled(m + new Vector2(0.5f, 1f), S(6.5f) * k, 0x55000000);
+                dl.AddCircleFilled(m, S(6f) * k, 0xFF40DAFFu);
+                dl.AddCircle      (m, S(6f) * k, 0xC0202830u, 0, 1.5f);
+                dl.AddCircleFilled(m, S(2f) * k, 0xFFFFFFFFu);
             }
 
             if (single)
@@ -862,10 +872,10 @@ internal static class SpawnCardRenderer
         var perp = new Vector2(-dir.Y, dir.X);
 
         // Arrowhead positioned just shy of the spawn marker
-        var tipPoint   = spawnPos - dir * 10f;
-        var arrowBase  = tipPoint - dir * 6.5f;
-        var arrowLeft  = arrowBase + perp * 4.2f;
-        var arrowRight = arrowBase - perp * 4.2f;
+        var tipPoint   = spawnPos - dir * S(10f);
+        var arrowBase  = tipPoint - dir * S(6.5f);
+        var arrowLeft  = arrowBase + perp * S(4.2f);
+        var arrowRight = arrowBase - perp * S(4.2f);
 
         const uint LineColor   = 0xFFFFEC52;        // light cyan (ABGR)
         const uint OutlineColor = 0xCC181E28;
@@ -886,8 +896,8 @@ internal static class SpawnCardRenderer
         // Small entry marker at the gateway end if it's visible in the crop
         if (gatewayVisible)
         {
-            dl.AddCircleFilled(gatewayRaw, 3.5f, LineColor);
-            dl.AddCircle      (gatewayRaw, 3.5f, OutlineColor, 0, 1f);
+            dl.AddCircleFilled(gatewayRaw, S(3.5f), LineColor);
+            dl.AddCircle      (gatewayRaw, S(3.5f), OutlineColor, 0, 1f);
         }
     }
 
@@ -954,19 +964,19 @@ internal static class SpawnCardRenderer
             dl.AddTriangleFilled(n, s, w, col);
         }
 
-        Diamond(a + new Vector2(0.5f, 1f), 5.5f, Shadow);
-        Diamond(a, 5f, Blue);
+        Diamond(a + new Vector2(0.5f, 1f), S(5.5f), Shadow);
+        Diamond(a, S(5f), Blue);
 
-        var an = a + new Vector2(0, -5f);
-        var ae = a + new Vector2(5f, 0);
-        var as_ = a + new Vector2(0, 5f);
-        var aw = a + new Vector2(-5f, 0);
+        var an  = a + new Vector2(0, -S(5f));
+        var ae  = a + new Vector2(S(5f), 0);
+        var as_ = a + new Vector2(0, S(5f));
+        var aw  = a + new Vector2(-S(5f), 0);
         dl.AddLine(an, ae, Outline, 1.2f);
         dl.AddLine(ae, as_, Outline, 1.2f);
         dl.AddLine(as_, aw, Outline, 1.2f);
         dl.AddLine(aw, an, Outline, 1.2f);
 
-        Diamond(a, 1.8f, 0xFFFFFFFFu);
+        Diamond(a, S(1.8f), 0xFFFFFFFFu);
     }
 
     // Resolve the raw 2048-scale coords of the in-zone aetheryte this spawn's
