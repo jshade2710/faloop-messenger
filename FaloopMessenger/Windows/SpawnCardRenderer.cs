@@ -620,13 +620,24 @@ internal static class SpawnCardRenderer
         // stale. Other users without the permission just don't get these.
         if (spawn.IsScheduled)
         {
-            var until = spawn.ReportedAt
-                      + TimeSpan.FromSeconds(spawn.ScheduleDelay ?? 0)
-                      - TimeSync.ServerNow;
-            if (until > TimeSpan.Zero)
-                Seg($"PRE-RELEASE -{FormatAge(until)}", ImGui.GetColorU32(Theme.Warn));
-            else
+            // Faloop sends stage:null on manual release — authoritative
+            // "publicly live now" signal that beats clock-skew math. Only
+            // fall back to ReportedAt+delay when stage is still set (real
+            // pre-release window with a countdown).
+            if (spawn.Stage == null)
+            {
                 Seg("RELEASED", ImGui.GetColorU32(Theme.PullReady));
+            }
+            else
+            {
+                var until = spawn.ReportedAt
+                          + TimeSpan.FromSeconds(spawn.ScheduleDelay ?? 0)
+                          - TimeSync.ServerNow;
+                if (until > TimeSpan.Zero)
+                    Seg($"PRE-RELEASE -{FormatAge(until)}", ImGui.GetColorU32(Theme.Warn));
+                else
+                    Seg("RELEASED", ImGui.GetColorU32(Theme.PullReady));
+            }
             Sep();
         }
 

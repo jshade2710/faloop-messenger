@@ -55,6 +55,13 @@ public class SpawnInfo
     // PRE-RELEASE flag flips to RELEASED. Null/absent = no delay (0).
     public int? ScheduleDelay { get; init; }
 
+    // Faloop's "stage" field on a spawn event. Pre-release events arrive with
+    // stage: 1 (or other non-null int). When a privileged reporter pushes
+    // "manual release", Faloop re-emits the spawn with stage: null — that's
+    // the authoritative signal that the pre-release window is over and the
+    // mob is publicly live, independent of clock skew or scheduleDelay math.
+    public int? Stage { get; init; }
+
     public bool      IsDead   { get; set; }
     public DateTime? KilledAt { get; set; }
 }

@@ -706,6 +706,12 @@ public class FaloopSocketClient : IDisposable
             ScheduleDelay = spawnData.TryGetProperty("scheduleDelay", out var sd) &&
                             sd.ValueKind == JsonValueKind.Number &&
                             sd.TryGetInt32(out var sdv) ? sdv : null,
+            // stage: int? — non-null while in pre-release window, null once
+            // manual release fires. Renderer uses this to flip PRE-RELEASE→
+            // RELEASED instantly, bypassing brittle ReportedAt+delay math.
+            Stage         = spawnData.TryGetProperty("stage", out var st) &&
+                            st.ValueKind == JsonValueKind.Number &&
+                            st.TryGetInt32(out var stv) ? stv : null,
             RawEvent     = mobData.GetRawText(),
         };
 
