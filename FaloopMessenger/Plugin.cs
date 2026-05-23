@@ -274,8 +274,9 @@ public sealed class Plugin : IDalamudPlugin
             var inst   = spawn.ZoneInstance > 0 ? $" i{spawn.ZoneInstance}" : string.Empty;
             var prefix = $"{extraPrefix}[Hunt {rank}] {spawn.MobName} on {spawn.World}{inst}";
 
-            var sb       = new SeStringBuilder().AddText(prefix);
-            var hasLink  = spawn.TerritoryId > 0 && spawn.MapId > 0;
+            var sb        = new SeStringBuilder().AddText(prefix);
+            var hasLink   = spawn.TerritoryId > 0 && spawn.MapId > 0;
+            var hasCoords = spawn.X > 0 && spawn.Y > 0;
 
             if (hasLink && spawn.Points.Count > 0)
             {
@@ -291,17 +292,19 @@ public sealed class Plugin : IDalamudPlugin
                     sb.Add(RawPayload.LinkTerminator);
                 }
             }
-            else if (hasLink)
+            else if (hasLink && hasCoords)
             {
                 sb.AddText("  ");
                 sb.Add(new MapLinkPayload(spawn.TerritoryId, spawn.MapId, spawn.X, spawn.Y));
                 sb.AddText($"({spawn.X:F1}, {spawn.Y:F1})");
                 sb.Add(RawPayload.LinkTerminator);
             }
-            else
+            else if (hasCoords)
             {
                 sb.AddText($"  ({spawn.X:F1}, {spawn.Y:F1})");
             }
+            // else: location not yet known — print mob/world only rather than
+            // a misleading "(0.0, 0.0)" / a clickable flag at the map origin.
 
             ChatGui.Print(sb.Build());
         }
