@@ -282,14 +282,21 @@ public class ConfigWindow : Window, IDisposable
         ImGui.SetNextItemWidth(260f);
         if (ImGui.SliderInt("##uiscale", ref pct, 80, 150, "%d%%"))
             Config.UiScale = pct / 100f;
+        // On release: persist AND rebuild the font atlas at the new size so
+        // glyphs are rasterized crisp instead of bitmap-scaled from a stale
+        // atlas (the cause of the post-v0.3.0 "everything looks blurry" bug).
         if (ImGui.IsItemDeactivatedAfterEdit())
+        {
             Config.Save();
+            _plugin.RebuildFonts();
+        }
 
         ImGui.SameLine(0, 8f);
         if (ImGui.SmallButton("Reset##uiscale"))
         {
             Config.UiScale = 1.0f;
             Config.Save();
+            _plugin.RebuildFonts();
         }
 
         Section("BEHAVIOUR");

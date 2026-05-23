@@ -76,9 +76,12 @@ public sealed class Plugin : IDalamudPlugin
 
         // Build game-font handles. NewGameFontHandle is non-blocking — the first
         // few frames may render in the default font until the atlas is rebuilt.
-        FontWorld  = PluginInterface.UiBuilder.FontAtlas.NewGameFontHandle(new GameFontStyle(GameFontFamily.Axis, 28f));
-        FontTitle  = PluginInterface.UiBuilder.FontAtlas.NewGameFontHandle(new GameFontStyle(GameFontFamily.Axis, 22f));
-        FontMedium = PluginInterface.UiBuilder.FontAtlas.NewGameFontHandle(new GameFontStyle(GameFontFamily.Axis, 16f));
+        // Rasterize at the exact px sizes the card draws at (18/22/28 ×
+        // UiScale). Drawing a font at any size other than its rasterized
+        // size causes ImGui to bitmap-scale the glyph atlas → visible blur.
+        // RebuildFonts() is also invoked from the UI scale slider so glyphs
+        // stay crisp when the user changes scale.
+        RebuildFonts();
 
         MainWindow    = new MainWindow(this);
         MiniWindow    = new SpawnListWindow(this,
@@ -148,9 +151,26 @@ public sealed class Plugin : IDalamudPlugin
         Client.OnUpdate   -= HandleSpawnsChanged;
         Client.Dispose();
 
-        FontWorld.Dispose();
-        FontTitle.Dispose();
-        FontMedium.Dispose();
+        FontWorld?.Dispose();
+        FontTitle?.Dispose();
+        FontMedium?.Dispose();
+    }
+
+    // (Re)builds the three card fonts at sizes matching the current
+    // Configuration.UiScale so glyphs render at their rasterized size (sharp)
+    // instead of being bitmap-scaled by ImGui (blurry). Safe to call mid-
+    // session; old handles are disposed first. Called from startup and from
+    // the Appearance tab when the user releases the UI Scale slider.
+    public void RebuildFonts()
+    {
+        FontWorld?.Dispose();
+        FontTitle?.Dispose();
+        FontMedium?.Dispose();
+
+        var s = Configuration.UiScale;
+        FontWorld  = PluginInterface.UiBuilder.FontAtlas.NewGameFontHandle(new GameFontStyle(GameFontFamily.Axis, 28f * s));
+        FontTitle  = PluginInterface.UiBuilder.FontAtlas.NewGameFontHandle(new GameFontStyle(GameFontFamily.Axis, 22f * s));
+        FontMedium = PluginInterface.UiBuilder.FontAtlas.NewGameFontHandle(new GameFontStyle(GameFontFamily.Axis, 18f * s));
     }
 
     // True when the spawn windows should be suppressed this frame because the
