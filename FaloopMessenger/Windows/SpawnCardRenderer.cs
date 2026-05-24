@@ -620,23 +620,36 @@ internal static class SpawnCardRenderer
         // stale. Other users without the permission just don't get these.
         if (spawn.IsScheduled)
         {
-            // Faloop sends stage:null on manual release — authoritative
-            // "publicly live now" signal that beats clock-skew math. Only
-            // fall back to ReportedAt+delay when stage is still set (real
-            // pre-release window with a countdown).
+            // Three sub-forms of "not yet public" — distinct labels so the
+            // user can tell at a glance whether the public will see this
+            // soon (timed), eventually (untimed pre-release), or only when
+            // the reporter manually pushes it (early-access / stage:null).
+            // None of these mean "go pull it" — the green RELEASED badge
+            // only fires from the OnNewSpawn re-trigger when an actual
+            // non-scheduled event arrives (see FaloopSocketClient upsert).
             if (spawn.Stage == null)
             {
-                Seg("RELEASED", ImGui.GetColorU32(Theme.PullReady));
+                // Manual release: privileged tier sees it, public does NOT.
+                // No timer is coming; we'll only know it went public when
+                // Faloop pushes the follow-up isScheduled:false event.
+                Seg("EARLY ACCESS", ImGui.GetColorU32(Theme.RouteHint));
             }
-            else
+            else if (spawn.ScheduleDelay.HasValue && spawn.ScheduleDelay.Value > 0)
             {
                 var until = spawn.ReportedAt
-                          + TimeSpan.FromSeconds(spawn.ScheduleDelay ?? 0)
+                          + TimeSpan.FromSeconds(spawn.ScheduleDelay.Value)
                           - TimeSync.ServerNow;
                 if (until > TimeSpan.Zero)
                     Seg($"PRE-RELEASE -{FormatAge(until)}", ImGui.GetColorU32(Theme.Warn));
                 else
-                    Seg("RELEASED", ImGui.GetColorU32(Theme.PullReady));
+                    // Timer expired locally but we haven't received the
+                    // public event yet — don't lie and say RELEASED.
+                    Seg("PRE-RELEASE (pending)", ImGui.GetColorU32(Theme.Warn));
+            }
+            else
+            {
+                // Pre-release without a timer (rare, but Faloop emits it).
+                Seg("PRE-RELEASE", ImGui.GetColorU32(Theme.Warn));
             }
             Sep();
         }

@@ -241,7 +241,11 @@ public sealed class Plugin : IDalamudPlugin
             try
             {
                 if (Configuration.AutoEchoOnSpawn)
-                    PrintSpawnEcho(spawn);
+                    // JustWentPublic = re-fire after a scheduled→public
+                    // transition. Prefix the echo so users see why the chat
+                    // line dinged twice (the first ding was the pre-release
+                    // heads-up; this one is the real "go pull it" alert).
+                    PrintSpawnEcho(spawn, spawn.JustWentPublic ? "[Public release] " : null);
 
                 if (Configuration.AutoSoundOnSpawn)
                     PlayChatSound(Configuration.SoundEffect);

@@ -731,8 +731,19 @@ public class FaloopSocketClient : IDisposable
 
             if (idx >= 0)
             {
+                // Watcher for the pre-release/early-access → public transition.
+                // If the card we already had was scheduled (any sub-form:
+                // timed pre-release, untimed pre-release, or permissioned
+                // early-access via stage:null), and THIS event is no longer
+                // scheduled, the mob just went genuinely public. Re-fire
+                // OnNewSpawn so the user gets a fresh ding + echo at the
+                // moment that actually matters for pulling — the previous
+                // pre-release alert was just a heads-up.
+                var prev = _spawns[idx];
+                var wentPublic = prev.IsScheduled && !spawn.IsScheduled;
+                spawn.JustWentPublic = wentPublic;
                 _spawns[idx] = spawn;   // refresh in place
-                isNew = false;
+                isNew = wentPublic;
             }
             else
             {

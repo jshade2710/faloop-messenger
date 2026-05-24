@@ -62,6 +62,14 @@ public class SpawnInfo
     // mob is publicly live, independent of clock skew or scheduleDelay math.
     public int? Stage { get; init; }
 
+    // Transient flag set by the socket-client upsert path when a spawn we
+    // were already tracking as scheduled/early-access just received its
+    // first non-scheduled event — the authoritative "now publicly live"
+    // signal. Drives the second ding + "[Public release]" echo prefix so
+    // users who muted the pre-release ping get a real alert at pull time.
+    // Not persisted; only meaningful for the single OnNewSpawn invocation.
+    public bool JustWentPublic { get; set; }
+
     public bool      IsDead   { get; set; }
     public DateTime? KilledAt { get; set; }
 }
