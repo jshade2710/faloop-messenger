@@ -111,6 +111,14 @@ public sealed class Plugin : IDalamudPlugin
         WindowSystem.AddWindow(CompactWindow);
         WindowSystem.AddWindow(ConfigWindow);
 
+        // Restore each window's open state from the previous session so
+        // a user mid-hunt who triggers a plugin update doesn't lose their
+        // tracker layout. Sync runs on every OnUpdate tick (see
+        // HandleSpawnsChanged) to keep the persisted state current.
+        MainWindow.IsOpen    = Configuration.MainWindowOpen;
+        MiniWindow.IsOpen    = Configuration.MiniWindowOpen;
+        CompactWindow.IsOpen = Configuration.CompactWindowOpen;
+
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
             HelpMessage = "Open the Faloop S-rank tracker (/faloop)"
@@ -144,6 +152,10 @@ public sealed class Plugin : IDalamudPlugin
 
     public void Dispose()
     {
+        // Capture final window-open state before we tear down so a Dalamud
+        // /reload right after an X-button close still persists the change.
+        try { SyncWindowOpenState(); } catch { /* swallow — disposing anyway */ }
+
         PluginInterface.UiBuilder.Draw         -= WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenMainUi   -= ToggleMainUi;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
@@ -235,28 +247,50 @@ public sealed class Plugin : IDalamudPlugin
         Configuration.Save();
     }
 
+    // Push the three windows' live IsOpen states into Configuration so
+    // they survive plugin updates / reloads / game restarts. The cost is
+    // three bool comparisons + (rarely) a Configuration.Save — cheap at
+    // the OnUpdate cadence this runs at. The early-return is what keeps
+    // the steady-state cost effectively zero.
+    private void SyncWindowOpenState()
+    {
+        if (Configuration.MainWindowOpen    == MainWindow.IsOpen    &&
+            Configuration.MiniWindowOpen    == MiniWindow.IsOpen    &&
+            Configuration.CompactWindowOpen == CompactWindow.IsOpen)
+            return;
+
+        Configuration.MainWindowOpen    = MainWindow.IsOpen;
+        Configuration.MiniWindowOpen    = MiniWindow.IsOpen;
+        Configuration.CompactWindowOpen = CompactWindow.IsOpen;
+        Configuration.Save();
+    }
+
     private void OnCommand(string command, string args)
     {
         MainWindow.Toggle();
         if (MainWindow.IsOpen) SetTracker(Tracker.Main);
+        SyncWindowOpenState();
     }
 
     private void OnMiniCommand(string command, string args)
     {
         MiniWindow.Toggle();
         if (MiniWindow.IsOpen) SetTracker(Tracker.Mini);
+        SyncWindowOpenState();
     }
 
     private void OnCompactCommand(string command, string args)
     {
         CompactWindow.Toggle();
         if (CompactWindow.IsOpen) SetTracker(Tracker.Compact);
+        SyncWindowOpenState();
     }
 
     public void ToggleMainUi()
     {
         MainWindow.Toggle();
         if (MainWindow.IsOpen) SetTracker(Tracker.Main);
+        SyncWindowOpenState();
     }
 
     public void ToggleConfigUi()  => ConfigWindow.Toggle();
@@ -315,6 +349,12 @@ public sealed class Plugin : IDalamudPlugin
                     ActiveTracker().IsOpen = false;
 
                 _lastLiveSCount = live;
+
+                // Sync persisted open-state — covers X-button closes,
+                // title-bar opens, and any other path that changes IsOpen
+                // outside our explicit setters. Saves only on actual diff
+                // to avoid disk-thrash from the frequent OnUpdate firings.
+                SyncWindowOpenState();
             }
             catch (System.Exception ex)
             {

@@ -94,6 +94,15 @@ public class Configuration : IPluginConfiguration
     // preferred tracker is what auto-opens on the next spawn.
     public int LastTracker { get; set; } = 0;
 
+    // Per-window persisted open state. Restored on plugin load so a user
+    // who had the Compact tracker up gets it back immediately after a
+    // plugin update — without having to wait for the next spawn for
+    // ActiveTracker() to re-open it. Synced from the live windows on every
+    // OnUpdate tick (cheap — just three bool reads and an equality check).
+    public bool MainWindowOpen    { get; set; } = false;
+    public bool MiniWindowOpen    { get; set; } = false;
+    public bool CompactWindowOpen { get; set; } = false;
+
     // Decrypt the stored blob into the in-memory Password, and migrate a
     // pre-0.2 plaintext "Password" key if one is present. Call once right
     // after the config is loaded. Returns true if a migration write is needed.
