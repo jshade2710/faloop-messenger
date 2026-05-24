@@ -544,6 +544,15 @@ public class FaloopSocketClient : IDisposable
                 case "spawn_location":
                     HandleSpawnLocationAction(mobSlug, worldSlug, zoneInst, mobData);
                     break;
+                case "spawn_release":
+                    // Public-release event for scheduled/early-access spawns.
+                    // Faloop emits this when the privileged-only pre-release
+                    // window closes and the mob becomes visible to everyone.
+                    // Without this handler, manual-release spawns never flip
+                    // out of EARLY ACCESS — we just silently dropped the
+                    // transition event.
+                    HandleSpawnReleaseAction(mobSlug, worldSlug, zoneInst, mobData);
+                    break;
                 case "death":
                     HandleDeathAction(mobSlug, worldSlug, zoneInst, mobData);
                     break;
@@ -907,6 +916,87 @@ public class FaloopSocketClient : IDisposable
                 out var utc))
             return utc.ToLocalTime();
         return null;
+    }
+
+    // spawn_release: Faloop's signal that a previously-scheduled (pre-release
+    // or early-access) spawn just became publicly visible. Find the existing
+    // tracked card, flip IsScheduled → false, stamp PublicReleasedAt so the
+    // renderer shows JUST RELEASED, and re-fire OnNewSpawn so the user gets
+    // a fresh ding + "[Public release]" echo at the moment that actually
+    // matters for pulling. Decoded from Faloop's main.js: fK = (e, t) =>
+    // ({ ...t.spawn, isScheduled: false, timestamp: e.timestamp })
+    private void HandleSpawnReleaseAction(string mobSlug, string worldSlug, int zoneInst, JsonElement mobData)
+    {
+        if (!FaloopData.Mobs.TryGetValue(mobSlug, out var mobInfo)) return;
+        var mobName = LookupMobName(mobInfo.BNpcId) ?? mobSlug;
+
+        FaloopData.Worlds.TryGetValue(worldSlug, out var worldId);
+        var worldName = (worldId > 0 ? LookupWorldName(worldId) : null) ?? worldSlug;
+
+        // Faloop uses the release event's timestamp as the new ReportedAt
+        // (matches fK's `timestamp: new Date(e.timestamp).toISOString()`).
+        DateTime? releaseTime = null;
+        if (mobData.TryGetProperty("data", out var rData))
+            releaseTime = TryParseUtc(GetString(rData, "timestamp"));
+
+        SpawnInfo? released = null;
+        lock (_lock)
+        {
+            var idx = _spawns.FindIndex(s =>
+                !s.IsDead &&
+                string.Equals(s.MobName, mobName, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(s.World,   worldName, StringComparison.OrdinalIgnoreCase) &&
+                s.ZoneInstance == zoneInst);
+
+            if (idx < 0)
+            {
+                // No card to flip — release for a spawn we never saw the
+                // pre-release of. Nothing useful to do here; ignore.
+                Plugin.Log.Debug($"[Faloop] spawn_release for unknown {mobName}@{worldName} i{zoneInst}");
+                return;
+            }
+
+            var prev = _spawns[idx];
+            // Build the released record by cloning the previous one and
+            // flipping the scheduled state. We preserve every other field
+            // (points, reporter, route hint, …) — the only thing changing
+            // is "is this visible to the public yet."
+            released = new SpawnInfo
+            {
+                World            = prev.World,
+                MobName          = prev.MobName,
+                ZoneName         = prev.ZoneName,
+                X                = prev.X,
+                Y                = prev.Y,
+                Rank             = prev.Rank,
+                HpPercent        = prev.HpPercent,
+                Reporter         = prev.Reporter,
+                ReportedAt       = releaseTime ?? DateTime.Now,
+                RawEvent         = mobData.GetRawText(),
+                ZoneInstance     = prev.ZoneInstance,
+                TerritoryId      = prev.TerritoryId,
+                MapId            = prev.MapId,
+                RawX             = prev.RawX,
+                RawY             = prev.RawY,
+                ZonePoiId        = prev.ZonePoiId,
+                Points           = prev.Points,
+                IsSS             = prev.IsSS,
+                IsScheduled      = false,           // ← the flip
+                ScheduleDelay    = null,
+                Stage            = null,
+                JustWentPublic   = true,
+                PublicReleasedAt = TimeSync.ServerNow,
+                IsDead           = false,
+                KilledAt         = null,
+            };
+
+            _spawns[idx] = released;
+            RebuildSnapshotLocked();
+        }
+
+        Plugin.Log.Debug($"[Faloop] spawn_release fired for {mobName}@{worldName} i{zoneInst}");
+        OnNewSpawn?.Invoke(released);   // re-ding + [Public release] echo
+        OnUpdate?.Invoke();
     }
 
     private void HandleSpawnFalseAction(string mobSlug, string worldSlug, int zoneInst)
