@@ -70,6 +70,13 @@ public class SpawnInfo
     // Not persisted; only meaningful for the single OnNewSpawn invocation.
     public bool JustWentPublic { get; set; }
 
+    // When a scheduled/early-access spawn transitions to public, the upsert
+    // path stamps this with ServerNow. Renderer shows a green JUST RELEASED
+    // badge for ~10 minutes after the stamp so the transition is visible
+    // (otherwise the card just silently loses its pre-release badge, which
+    // is indistinguishable from "the card never updated").
+    public DateTime? PublicReleasedAt { get; set; }
+
     public bool      IsDead   { get; set; }
     public DateTime? KilledAt { get; set; }
 }

@@ -636,15 +636,25 @@ internal static class SpawnCardRenderer
         // Count down to the public-release moment (ReportedAt + scheduleDelay
         // seconds) as "-Ns", then flip to RELEASED so the flag never goes
         // stale. Other users without the permission just don't get these.
-        if (spawn.IsScheduled)
+        // Just-released badge: stays green for ~10 minutes after a
+        // scheduled→public transition so the user can see the change
+        // landed. Independent of IsScheduled (which is false post-flip).
+        if (spawn.PublicReleasedAt.HasValue &&
+            TimeSync.ServerNow - spawn.PublicReleasedAt.Value < TimeSpan.FromMinutes(10))
+        {
+            Seg("JUST RELEASED", ImGui.GetColorU32(Theme.PullReady));
+            Sep();
+        }
+        else if (spawn.IsScheduled)
         {
             // Three sub-forms of "not yet public" — distinct labels so the
             // user can tell at a glance whether the public will see this
             // soon (timed), eventually (untimed pre-release), or only when
             // the reporter manually pushes it (early-access / stage:null).
-            // None of these mean "go pull it" — the green RELEASED badge
-            // only fires from the OnNewSpawn re-trigger when an actual
-            // non-scheduled event arrives (see FaloopSocketClient upsert).
+            // None of these mean "go pull it" — the green JUST RELEASED
+            // badge above only fires from the OnNewSpawn re-trigger when
+            // an actual non-scheduled event arrives (see socket-client
+            // upsert).
             if (spawn.Stage == null)
             {
                 // Manual release: privileged tier sees it, public does NOT.

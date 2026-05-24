@@ -750,8 +750,25 @@ public class FaloopSocketClient : IDisposable
                 var prev = _spawns[idx];
                 var wentPublic = prev.IsScheduled && !spawn.IsScheduled;
                 spawn.JustWentPublic = wentPublic;
+                // Stamp the moment of transition so the renderer can show a
+                // visible JUST RELEASED badge (otherwise the badge silently
+                // disappears and users can't tell if the card updated).
+                // Preserve any existing stamp through later refreshes.
+                spawn.PublicReleasedAt = wentPublic
+                    ? TimeSync.ServerNow
+                    : prev.PublicReleasedAt;
                 _spawns[idx] = spawn;   // refresh in place
                 isNew = wentPublic;
+
+                // Debug breadcrumb: log every refresh on an existing card so
+                // unexpected event shapes (action names, missing fields) are
+                // visible in /xllog when something doesn't transition as
+                // expected. Cheap — only fires on upserts, not new spawns.
+                Plugin.Log.Debug(
+                    $"[Faloop] Refresh {mobName}@{worldName} i{zoneInst}: " +
+                    $"prev.scheduled={prev.IsScheduled} stage={prev.Stage?.ToString() ?? "null"} → " +
+                    $"new.scheduled={spawn.IsScheduled} stage={spawn.Stage?.ToString() ?? "null"} " +
+                    $"(wentPublic={wentPublic})");
             }
             else
             {
