@@ -88,6 +88,12 @@ public class Configuration : IPluginConfiguration
     public bool AutoOpenMiniOnSpawn   { get; set; } = true;
     public bool AutoCloseMiniWhenIdle { get; set; } = true;
 
+    // Which spawn-list window auto-open should target: 0=Mini, 1=Compact,
+    // 2=Main. Updated whenever a tracker window is observed open in Draw,
+    // so it survives X-button closes AND plugin reloads — the user's last
+    // preferred tracker is what auto-opens on the next spawn.
+    public int LastTracker { get; set; } = 0;
+
     // Decrypt the stored blob into the in-memory Password, and migrate a
     // pre-0.2 plaintext "Password" key if one is present. Call once right
     // after the config is loaded. Returns true if a migration write is needed.

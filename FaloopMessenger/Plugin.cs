@@ -54,6 +54,16 @@ public sealed class Plugin : IDalamudPlugin
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         Config        = Configuration;
 
+        // Restore last preferred tracker so auto-open on the first post-
+        // reload spawn matches the user's most recent choice. Clamp to
+        // valid enum range so a corrupted config doesn't crash the switch.
+        _lastTracker = Configuration.LastTracker switch
+        {
+            (int)Tracker.Main    => Tracker.Main,
+            (int)Tracker.Compact => Tracker.Compact,
+            _                    => Tracker.Mini,
+        };
+
         // Decrypt the password blob and one-time-migrate any pre-0.2 plaintext
         // password into the encrypted-at-rest form.
         if (Configuration.LoadSecrets())
@@ -187,38 +197,66 @@ public sealed class Plugin : IDalamudPlugin
     // Which tracker window the user most recently opened. The auto open/close
     // on spawn targets THIS one — so if you live in /faloopcompact, the
     // compact window is what pops and hides, not always the mini.
-    private enum Tracker { Main, Mini, Compact }
-    private Tracker _lastTracker = Tracker.Mini;
+    private enum Tracker { Main = 2, Mini = 0, Compact = 1 }
+    private Tracker _lastTracker;
 
-    private Dalamud.Interface.Windowing.Window ActiveTracker() => _lastTracker switch
+    // Resolve which tracker auto-open should target. Preference order:
+    // 1) Whatever is currently open (so an in-progress session is sticky
+    //    even if the user opened the window via the title bar / Dalamud
+    //    restore rather than our slash commands).
+    // 2) The persisted Configuration.LastTracker (survives reloads).
+    // 3) Mini as the final fallback (legacy default).
+    private Dalamud.Interface.Windowing.Window ActiveTracker()
     {
-        Tracker.Main    => MainWindow,
-        Tracker.Compact => CompactWindow,
-        _               => MiniWindow,
-    };
+        // (1) Live observation — beats stored preference if the user has
+        // a window up right now. Order matches the visual hierarchy
+        // (Compact > Mini > Main) so the smallest/most-recent wins.
+        if (CompactWindow.IsOpen) { SetTracker(Tracker.Compact); return CompactWindow; }
+        if (MiniWindow.IsOpen)    { SetTracker(Tracker.Mini);    return MiniWindow;    }
+        if (MainWindow.IsOpen)    { SetTracker(Tracker.Main);    return MainWindow;    }
+
+        // (2) Fall back to persisted preference.
+        return _lastTracker switch
+        {
+            Tracker.Main    => MainWindow,
+            Tracker.Compact => CompactWindow,
+            _               => MiniWindow,
+        };
+    }
+
+    // Centralised setter — keeps the in-memory enum and the persisted
+    // Configuration.LastTracker in sync. Saves only on actual change to
+    // avoid disk churn on every spawn.
+    private void SetTracker(Tracker t)
+    {
+        if (_lastTracker == t) return;
+        _lastTracker = t;
+        Configuration.LastTracker = (int)t;
+        Configuration.Save();
+    }
 
     private void OnCommand(string command, string args)
     {
         MainWindow.Toggle();
-        if (MainWindow.IsOpen) _lastTracker = Tracker.Main;
+        if (MainWindow.IsOpen) SetTracker(Tracker.Main);
     }
 
     private void OnMiniCommand(string command, string args)
     {
         MiniWindow.Toggle();
-        if (MiniWindow.IsOpen) _lastTracker = Tracker.Mini;
+        if (MiniWindow.IsOpen) SetTracker(Tracker.Mini);
     }
 
     private void OnCompactCommand(string command, string args)
     {
         CompactWindow.Toggle();
-        if (CompactWindow.IsOpen) _lastTracker = Tracker.Compact;
+        if (CompactWindow.IsOpen) SetTracker(Tracker.Compact);
     }
 
     public void ToggleMainUi()
     {
         MainWindow.Toggle();
-        if (MainWindow.IsOpen) _lastTracker = Tracker.Main;
+        if (MainWindow.IsOpen) SetTracker(Tracker.Main);
     }
 
     public void ToggleConfigUi()  => ConfigWindow.Toggle();
