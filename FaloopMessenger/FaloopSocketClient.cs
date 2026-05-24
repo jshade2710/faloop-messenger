@@ -553,6 +553,13 @@ public class FaloopSocketClient : IDisposable
                     // transition event.
                     HandleSpawnReleaseAction(mobSlug, worldSlug, zoneInst, mobData);
                     break;
+                case "spawn_progress":
+                    // Phase advancement for multi-phase SS-rank / precursor
+                    // spawns. Updates Stage and narrows the marker cloud to
+                    // the new phase's POI set — the "card flip" behaviour
+                    // visible on Faloop's website as a hunt progresses.
+                    HandleSpawnProgressAction(mobSlug, worldSlug, zoneInst, ids, mobData);
+                    break;
                 case "death":
                     HandleDeathAction(mobSlug, worldSlug, zoneInst, mobData);
                     break;
@@ -996,6 +1003,131 @@ public class FaloopSocketClient : IDisposable
 
         Plugin.Log.Debug($"[Faloop] spawn_release fired for {mobName}@{worldName} i{zoneInst}");
         OnNewSpawn?.Invoke(released);   // re-ding + [Public release] echo
+        OnUpdate?.Invoke();
+    }
+
+    // spawn_progress: a multi-phase SS-precursor / SS-rank spawn just advanced
+    // to a new phase. The matching MobData.Phases entry tells us which POIs
+    // are active in this new phase. We narrow the card's marker cloud to the
+    // intersection of (this phase's POIs) ∩ (POIs in the spawn's current
+    // zone), so a 24-POI Phase 1 cloud collapses to the 4-POI Phase 2
+    // cluster, then to the 1-POI Phase 3 final spot — same visual narrowing
+    // Faloop's own site does. Decoded from main.js: gK = (e, t, n) => ({
+    //   ...n.spawn, stage: e.phaseNum, zonePoiIds: u when (u.length===1 ||
+    //   phase.grouped), timestamp: ... })
+    private void HandleSpawnProgressAction(string mobSlug, string worldSlug, int zoneInst,
+                                            JsonElement ids, JsonElement mobData)
+    {
+        if (!FaloopData.Mobs.TryGetValue(mobSlug, out var mobInfo)) return;
+        if (mobInfo.Phases == null || mobInfo.Phases.Length == 0) return;
+
+        var mobName = LookupMobName(mobInfo.BNpcId) ?? mobSlug;
+        FaloopData.Worlds.TryGetValue(worldSlug, out var worldId);
+        var worldName = (worldId > 0 ? LookupWorldName(worldId) : null) ?? worldSlug;
+
+        // phaseNum is 1-based on the wire; clamp to the Phases array bounds.
+        var phaseNum = ids.TryGetProperty("phaseNum", out var pn) && pn.TryGetInt32(out var pv) ? pv : 1;
+        if (phaseNum < 1 || phaseNum > mobInfo.Phases.Length) return;
+        var phase = mobInfo.Phases[phaseNum - 1];
+
+        // event's data block for the new timestamp.
+        DateTime? progressTime = null;
+        if (mobData.TryGetProperty("data", out var pData))
+            progressTime = TryParseUtc(GetString(pData, "timestamp"));
+
+        SpawnInfo? next = null;
+        lock (_lock)
+        {
+            var idx = _spawns.FindIndex(s =>
+                !s.IsDead &&
+                string.Equals(s.MobName, mobName, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(s.World,   worldName, StringComparison.OrdinalIgnoreCase) &&
+                s.ZoneInstance == zoneInst);
+
+            if (idx < 0)
+            {
+                Plugin.Log.Debug($"[Faloop] spawn_progress for unknown {mobName}@{worldName} i{zoneInst} ph{phaseNum}");
+                return;
+            }
+
+            var prev = _spawns[idx];
+
+            // Filter the phase's POI list to those that resolve to coords in
+            // our table — implicitly drops POIs from other zones since cross-
+            // zone IDs won't be relevant (every POI lives in exactly one
+            // zone, so unresolved-in-this-context = different zone).
+            var narrowedRaw = new List<(int X, int Y)>();
+            var narrowedPois = new List<int>();
+            foreach (var poiId in phase.ZonePoiIds)
+            {
+                if (FaloopData.Locations.TryGetValue(poiId, out var ploc) &&
+                    TryParseRaw(ploc, out var px, out var py))
+                {
+                    narrowedRaw.Add((px, py));
+                    narrowedPois.Add(poiId);
+                }
+            }
+
+            // Convert raw → map coords using the spawn's existing territory.
+            var points = new List<SpawnPoint>();
+            if (prev.TerritoryId > 0)
+            {
+                foreach (var rp in narrowedRaw)
+                {
+                    var c = ResolveCoords(prev.TerritoryId, $"{rp.X},{rp.Y}");
+                    if (c.HasValue)
+                        points.Add(new SpawnPoint(c.Value.rawX, c.Value.rawY,
+                                                  c.Value.x, c.Value.y));
+                }
+            }
+
+            // Filter further by spawn's current zone POIs. If the original
+            // spawn had specific POI markers and at least some of the
+            // narrowed points overlap with the spawn's territory, keep
+            // them; otherwise we'd accidentally show another zone's set.
+            // (gK does this via Zone.forId(zoneId).pois — we approximate
+            // by demanding ResolveCoords succeeded against this territory.)
+            if (points.Count == 0)
+            {
+                // Nothing resolved in this zone — likely a cross-zone POI
+                // set we shouldn't apply to this spawn. Keep prev points.
+                points = prev.Points;
+            }
+
+            next = new SpawnInfo
+            {
+                World            = prev.World,
+                MobName          = prev.MobName,
+                ZoneName         = prev.ZoneName,
+                X                = points.Count > 0 ? points[0].MapX : prev.X,
+                Y                = points.Count > 0 ? points[0].MapY : prev.Y,
+                Rank             = prev.Rank,
+                HpPercent        = prev.HpPercent,
+                Reporter         = prev.Reporter,
+                ReportedAt       = progressTime ?? prev.ReportedAt,
+                RawEvent         = mobData.GetRawText(),
+                ZoneInstance     = prev.ZoneInstance,
+                TerritoryId      = prev.TerritoryId,
+                MapId            = prev.MapId,
+                RawX             = points.Count > 0 ? points[0].RawX : prev.RawX,
+                RawY             = points.Count > 0 ? points[0].RawY : prev.RawY,
+                ZonePoiId        = narrowedPois.Count > 0 ? narrowedPois[0] : prev.ZonePoiId,
+                Points           = points,
+                IsSS             = prev.IsSS,
+                IsScheduled      = prev.IsScheduled,
+                ScheduleDelay    = prev.ScheduleDelay,
+                Stage            = phaseNum,
+                JustWentPublic   = false,
+                PublicReleasedAt = prev.PublicReleasedAt,
+                IsDead           = false,
+                KilledAt         = null,
+            };
+
+            _spawns[idx] = next;
+            RebuildSnapshotLocked();
+        }
+
+        Plugin.Log.Debug($"[Faloop] spawn_progress {mobName}@{worldName} i{zoneInst} → phase {phaseNum} ({next.Points.Count} pts, grouped={phase.Grouped})");
         OnUpdate?.Invoke();
     }
 

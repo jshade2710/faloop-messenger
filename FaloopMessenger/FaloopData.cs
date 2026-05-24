@@ -20,7 +20,14 @@ public enum MobRank { B, A, S, SS, FATE }
 // filter — every hunt zone's TerritoryType ID falls cleanly into one bucket.
 public enum Expansion { ARR, HW, StB, ShB, EW, DT }
 
-public record MobData(uint BNpcId, MobRank Rank);
+// One phase of a multi-phase (typically SS-precursor / SS-rank) spawn.
+// As Faloop emits spawn_progress events advancing the phase, the active
+// POI cloud narrows to whichever Phase the new phaseNum points at.
+// Grouped=true means "the SS is about to spawn within this small cluster";
+// the last phase typically has a single POI and grouped=false (final spot).
+public record SpawnPhase(int[] ZonePoiIds, bool Grouped);
+
+public record MobData(uint BNpcId, MobRank Rank, SpawnPhase[]? Phases = null);
 
 // Loads and caches the embedded JSON once. The JsonDocument is held for the
 // process lifetime (never disposed) so the parsed JsonElements stay valid.
@@ -72,7 +79,32 @@ public static class FaloopData
         foreach (var p in FaloopJson.Root.GetProperty("mobs").EnumerateObject())
         {
             var rank = Enum.Parse<MobRank>(p.Value.GetProperty("rank").GetString()!);
-            d[p.Name] = new MobData(p.Value.GetProperty("bnpc").GetUInt32(), rank);
+            var bnpc = p.Value.GetProperty("bnpc").GetUInt32();
+
+            // Optional phases array (only on SS ranks + SS-precursor mobs).
+            // Drives the spawn_progress narrowing — see HandleSpawnProgress
+            // in FaloopSocketClient.
+            SpawnPhase[]? phases = null;
+            if (p.Value.TryGetProperty("phases", out var ph) && ph.ValueKind == JsonValueKind.Array)
+            {
+                var list = new List<SpawnPhase>();
+                foreach (var phaseEl in ph.EnumerateArray())
+                {
+                    var ids = new List<int>();
+                    if (phaseEl.TryGetProperty("zonePoiIds", out var idsEl) &&
+                        idsEl.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var idEl in idsEl.EnumerateArray())
+                            if (idEl.ValueKind == JsonValueKind.Number) ids.Add(idEl.GetInt32());
+                    }
+                    var grouped = phaseEl.TryGetProperty("grouped", out var g) &&
+                                  g.ValueKind == JsonValueKind.True;
+                    list.Add(new SpawnPhase(ids.ToArray(), grouped));
+                }
+                phases = list.ToArray();
+            }
+
+            d[p.Name] = new MobData(bnpc, rank, phases);
         }
         return new ReadOnlyDictionary<string, MobData>(d);
     }

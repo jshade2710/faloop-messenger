@@ -1,15 +1,40 @@
-{
+﻿{
     "expansionThresholds":  [
-        { "exp":  "ARR", "below":  397 },
-        { "exp":  "HW",  "below":  500 },
-        { "exp":  "StB", "below":  700 },
-        { "exp":  "ShB", "below":  900 },
-        { "exp":  "EW",  "below":  1100 }
-    ],
+                                {
+                                    "exp":  "ARR",
+                                    "below":  397
+                                },
+                                {
+                                    "exp":  "HW",
+                                    "below":  500
+                                },
+                                {
+                                    "exp":  "StB",
+                                    "below":  700
+                                },
+                                {
+                                    "exp":  "ShB",
+                                    "below":  900
+                                },
+                                {
+                                    "exp":  "EW",
+                                    "below":  1100
+                                }
+                            ],
     "mobs":  {
                  "behemoth":  {
                                   "bnpc":  655,
-                                  "rank":  "FATE"
+                                  "rank":  "FATE",
+                                  "phases":  [
+                                                 {
+                                                     "zonePoiIds":  491,
+                                                     "grouped":  false
+                                                 },
+                                                 {
+                                                     "zonePoiIds":  471,
+                                                     "grouped":  false
+                                                 }
+                                             ]
                               },
                  "odin":  {
                               "bnpc":  887,
@@ -477,11 +502,57 @@
                            },
                  "archaeotania":  {
                                       "bnpc":  8234,
-                                      "rank":  "FATE"
+                                      "rank":  "FATE",
+                                      "phases":  [
+                                                     {
+                                                         "zonePoiIds":  1046,
+                                                         "grouped":  false
+                                                     },
+                                                     {
+                                                         "zonePoiIds":  1048,
+                                                         "grouped":  false
+                                                     }
+                                                 ]
                                   },
                  "aglaope":  {
                                  "bnpc":  8653,
-                                 "rank":  "S"
+                                 "rank":  "S",
+                                 "phases":  [
+                                                {
+                                                    "zonePoiIds":  [
+                                                                       979,
+                                                                       980,
+                                                                       981,
+                                                                       983,
+                                                                       984,
+                                                                       985,
+                                                                       986,
+                                                                       988,
+                                                                       990,
+                                                                       991,
+                                                                       992,
+                                                                       994,
+                                                                       995,
+                                                                       996,
+                                                                       997,
+                                                                       999
+                                                                   ],
+                                                    "grouped":  false
+                                                },
+                                                {
+                                                    "zonePoiIds":  [
+                                                                       982,
+                                                                       987,
+                                                                       993,
+                                                                       998
+                                                                   ],
+                                                    "grouped":  true
+                                                },
+                                                {
+                                                    "zonePoiIds":  989,
+                                                    "grouped":  false
+                                                }
+                                            ]
                              },
                  "the_mudman":  {
                                     "bnpc":  8654,
@@ -505,7 +576,42 @@
                                 },
                  "ixtab":  {
                                "bnpc":  8890,
-                               "rank":  "S"
+                               "rank":  "S",
+                               "phases":  [
+                                              {
+                                                  "zonePoiIds":  [
+                                                                     1003,
+                                                                     1005,
+                                                                     1006,
+                                                                     1007,
+                                                                     1008,
+                                                                     1010,
+                                                                     1012,
+                                                                     1013,
+                                                                     1014,
+                                                                     1015,
+                                                                     1016,
+                                                                     1017,
+                                                                     1018,
+                                                                     1019,
+                                                                     1020
+                                                                 ],
+                                                  "grouped":  false
+                                              },
+                                              {
+                                                  "zonePoiIds":  [
+                                                                     1004,
+                                                                     1009,
+                                                                     1011,
+                                                                     1021
+                                                                 ],
+                                                  "grouped":  true
+                                              },
+                                              {
+                                                  "zonePoiIds":  1022,
+                                                  "grouped":  false
+                                              }
+                                          ]
                            },
                  "supay":  {
                                "bnpc":  8891,
@@ -525,7 +631,42 @@
                                },
                  "gunitt":  {
                                 "bnpc":  8895,
-                                "rank":  "S"
+                                "rank":  "S",
+                                "phases":  [
+                                               {
+                                                   "zonePoiIds":  [
+                                                                      1026,
+                                                                      1029,
+                                                                      1030,
+                                                                      1033,
+                                                                      1034,
+                                                                      1035,
+                                                                      1036,
+                                                                      1037,
+                                                                      1039,
+                                                                      1040,
+                                                                      1041,
+                                                                      1042,
+                                                                      1043,
+                                                                      1045,
+                                                                      1047
+                                                                  ],
+                                                   "grouped":  false
+                                               },
+                                               {
+                                                   "zonePoiIds":  [
+                                                                      1028,
+                                                                      1032,
+                                                                      1038,
+                                                                      1049
+                                                                  ],
+                                                   "grouped":  true
+                                               },
+                                               {
+                                                   "zonePoiIds":  1044,
+                                                   "grouped":  false
+                                               }
+                                           ]
                             },
                  "rusalka":  {
                                  "bnpc":  8896,
@@ -545,7 +686,42 @@
                             },
                  "tarchia":  {
                                  "bnpc":  8900,
-                                 "rank":  "S"
+                                 "rank":  "S",
+                                 "phases":  [
+                                                {
+                                                    "zonePoiIds":  [
+                                                                       953,
+                                                                       954,
+                                                                       956,
+                                                                       957,
+                                                                       958,
+                                                                       959,
+                                                                       960,
+                                                                       961,
+                                                                       962,
+                                                                       963,
+                                                                       965,
+                                                                       969,
+                                                                       970,
+                                                                       971,
+                                                                       973
+                                                                   ],
+                                                    "grouped":  false
+                                                },
+                                                {
+                                                    "zonePoiIds":  [
+                                                                       951,
+                                                                       955,
+                                                                       964,
+                                                                       968
+                                                                   ],
+                                                    "grouped":  true
+                                                },
+                                                {
+                                                    "zonePoiIds":  972,
+                                                    "grouped":  false
+                                                }
+                                            ]
                              },
                  "maliktender":  {
                                      "bnpc":  8901,
@@ -565,7 +741,42 @@
                                       },
                  "tyger":  {
                                "bnpc":  8905,
-                               "rank":  "S"
+                               "rank":  "S",
+                               "phases":  [
+                                              {
+                                                  "zonePoiIds":  [
+                                                                     892,
+                                                                     895,
+                                                                     896,
+                                                                     897,
+                                                                     898,
+                                                                     899,
+                                                                     900,
+                                                                     901,
+                                                                     903,
+                                                                     905,
+                                                                     906,
+                                                                     907,
+                                                                     910,
+                                                                     911,
+                                                                     914
+                                                                 ],
+                                                  "grouped":  false
+                                              },
+                                              {
+                                                  "zonePoiIds":  [
+                                                                     893,
+                                                                     894,
+                                                                     908,
+                                                                     913
+                                                                 ],
+                                                  "grouped":  true
+                                              },
+                                              {
+                                                  "zonePoiIds":  902,
+                                                  "grouped":  false
+                                              }
+                                          ]
                            },
                  "nuckelavee":  {
                                     "bnpc":  8906,
@@ -585,7 +796,44 @@
                                  },
                  "forgiven_pedantry":  {
                                            "bnpc":  8910,
-                                           "rank":  "S"
+                                           "rank":  "S",
+                                           "phases":  [
+                                                          {
+                                                              "zonePoiIds":  [
+                                                                                 921,
+                                                                                 923,
+                                                                                 924,
+                                                                                 925,
+                                                                                 928,
+                                                                                 929,
+                                                                                 930,
+                                                                                 931,
+                                                                                 932,
+                                                                                 934,
+                                                                                 935,
+                                                                                 936,
+                                                                                 937,
+                                                                                 938,
+                                                                                 940,
+                                                                                 941,
+                                                                                 942
+                                                                             ],
+                                                              "grouped":  false
+                                                          },
+                                                          {
+                                                              "zonePoiIds":  [
+                                                                                 926,
+                                                                                 927,
+                                                                                 939,
+                                                                                 943
+                                                                             ],
+                                                              "grouped":  true
+                                                          },
+                                                          {
+                                                              "zonePoiIds":  922,
+                                                              "grouped":  false
+                                                          }
+                                                      ]
                                        },
                  "lil_murderer":  {
                                       "bnpc":  8911,
@@ -605,7 +853,49 @@
                                  },
                  "forgiven_rebellion":  {
                                             "bnpc":  8915,
-                                            "rank":  "SS"
+                                            "rank":  "SS",
+                                            "phases":  [
+                                                           {
+                                                               "zonePoiIds":  [
+                                                                                  893,
+                                                                                  894,
+                                                                                  908,
+                                                                                  913,
+                                                                                  926,
+                                                                                  927,
+                                                                                  939,
+                                                                                  943,
+                                                                                  951,
+                                                                                  955,
+                                                                                  964,
+                                                                                  968,
+                                                                                  982,
+                                                                                  987,
+                                                                                  993,
+                                                                                  998,
+                                                                                  1004,
+                                                                                  1009,
+                                                                                  1011,
+                                                                                  1021,
+                                                                                  1028,
+                                                                                  1032,
+                                                                                  1038,
+                                                                                  1049
+                                                                              ],
+                                                               "grouped":  true
+                                                           },
+                                                           {
+                                                               "zonePoiIds":  [
+                                                                                  902,
+                                                                                  922,
+                                                                                  972,
+                                                                                  989,
+                                                                                  1022,
+                                                                                  1044
+                                                                              ],
+                                                               "grouped":  false
+                                                           }
+                                                       ]
                                         },
                  "daivadipa":  {
                                    "bnpc":  10269,
@@ -617,31 +907,252 @@
                          },
                  "ker":  {
                              "bnpc":  10615,
-                             "rank":  "SS"
+                             "rank":  "SS",
+                             "phases":  [
+                                            {
+                                                "zonePoiIds":  [
+                                                                   1054,
+                                                                   1060,
+                                                                   1062,
+                                                                   1065,
+                                                                   1073,
+                                                                   1077,
+                                                                   1083,
+                                                                   1085,
+                                                                   1091,
+                                                                   1092,
+                                                                   1101,
+                                                                   1103,
+                                                                   1108,
+                                                                   1110,
+                                                                   1121,
+                                                                   1122,
+                                                                   1146,
+                                                                   1147,
+                                                                   1150,
+                                                                   1160,
+                                                                   1127,
+                                                                   1130,
+                                                                   1137,
+                                                                   1138
+                                                               ],
+                                                "grouped":  true
+                                            },
+                                            {
+                                                "zonePoiIds":  [
+                                                                   1058,
+                                                                   1079,
+                                                                   1099,
+                                                                   1118,
+                                                                   1154,
+                                                                   1135
+                                                               ],
+                                                "grouped":  false
+                                            }
+                                        ]
                          },
                  "burfurlur_the_canny":  {
                                              "bnpc":  10617,
-                                             "rank":  "S"
+                                             "rank":  "S",
+                                             "phases":  [
+                                                            {
+                                                                "zonePoiIds":  [
+                                                                                   1055,
+                                                                                   1056,
+                                                                                   1057,
+                                                                                   1059,
+                                                                                   1061,
+                                                                                   1063,
+                                                                                   1064,
+                                                                                   1066,
+                                                                                   1067,
+                                                                                   1068
+                                                                               ],
+                                                                "grouped":  false
+                                                            },
+                                                            {
+                                                                "zonePoiIds":  [
+                                                                                   1054,
+                                                                                   1060,
+                                                                                   1062,
+                                                                                   1065
+                                                                               ],
+                                                                "grouped":  true
+                                                            },
+                                                            {
+                                                                "zonePoiIds":  1058,
+                                                                "grouped":  false
+                                                            }
+                                                        ]
                                          },
                  "sphatika":  {
                                   "bnpc":  10618,
-                                  "rank":  "S"
+                                  "rank":  "S",
+                                  "phases":  [
+                                                 {
+                                                     "zonePoiIds":  [
+                                                                        1074,
+                                                                        1075,
+                                                                        1076,
+                                                                        1078,
+                                                                        1080,
+                                                                        1081,
+                                                                        1082,
+                                                                        1084,
+                                                                        1086
+                                                                    ],
+                                                     "grouped":  false
+                                                 },
+                                                 {
+                                                     "zonePoiIds":  [
+                                                                        1073,
+                                                                        1077,
+                                                                        1083,
+                                                                        1085
+                                                                    ],
+                                                     "grouped":  true
+                                                 },
+                                                 {
+                                                     "zonePoiIds":  1079,
+                                                     "grouped":  false
+                                                 }
+                                             ]
                               },
                  "armstrong":  {
                                    "bnpc":  10619,
-                                   "rank":  "S"
+                                   "rank":  "S",
+                                   "phases":  [
+                                                  {
+                                                      "zonePoiIds":  [
+                                                                         1093,
+                                                                         1094,
+                                                                         1095,
+                                                                         1096,
+                                                                         1097,
+                                                                         1098,
+                                                                         1100,
+                                                                         1102,
+                                                                         1104
+                                                                     ],
+                                                      "grouped":  false
+                                                  },
+                                                  {
+                                                      "zonePoiIds":  [
+                                                                         1091,
+                                                                         1092,
+                                                                         1101,
+                                                                         1103
+                                                                     ],
+                                                      "grouped":  true
+                                                  },
+                                                  {
+                                                      "zonePoiIds":  1099,
+                                                      "grouped":  false
+                                                  }
+                                              ]
                                },
                  "ruminator":  {
                                    "bnpc":  10620,
-                                   "rank":  "S"
+                                   "rank":  "S",
+                                   "phases":  [
+                                                  {
+                                                      "zonePoiIds":  [
+                                                                         1109,
+                                                                         1111,
+                                                                         1112,
+                                                                         1113,
+                                                                         1114,
+                                                                         1115,
+                                                                         1116,
+                                                                         1117,
+                                                                         1119,
+                                                                         1120
+                                                                     ],
+                                                      "grouped":  false
+                                                  },
+                                                  {
+                                                      "zonePoiIds":  [
+                                                                         1108,
+                                                                         1110,
+                                                                         1121,
+                                                                         1122,
+                                                                         1146
+                                                                     ],
+                                                      "grouped":  true
+                                                  },
+                                                  {
+                                                      "zonePoiIds":  1118,
+                                                      "grouped":  false
+                                                  }
+                                              ]
                                },
                  "ophioneus":  {
                                    "bnpc":  10621,
-                                   "rank":  "S"
+                                   "rank":  "S",
+                                   "phases":  [
+                                                  {
+                                                      "zonePoiIds":  [
+                                                                         1145,
+                                                                         1148,
+                                                                         1149,
+                                                                         1151,
+                                                                         1152,
+                                                                         1153,
+                                                                         1155,
+                                                                         1156,
+                                                                         1157,
+                                                                         1158,
+                                                                         1159
+                                                                     ],
+                                                      "grouped":  false
+                                                  },
+                                                  {
+                                                      "zonePoiIds":  [
+                                                                         1146,
+                                                                         1147,
+                                                                         1150,
+                                                                         1160
+                                                                     ],
+                                                      "grouped":  true
+                                                  },
+                                                  {
+                                                      "zonePoiIds":  1154,
+                                                      "grouped":  false
+                                                  }
+                                              ]
                                },
                  "narrow_rift":  {
                                      "bnpc":  10622,
-                                     "rank":  "S"
+                                     "rank":  "S",
+                                     "phases":  [
+                                                    {
+                                                        "zonePoiIds":  [
+                                                                           1126,
+                                                                           1128,
+                                                                           1129,
+                                                                           1131,
+                                                                           1133,
+                                                                           1134,
+                                                                           1136,
+                                                                           1139,
+                                                                           1140
+                                                                       ],
+                                                        "grouped":  false
+                                                    },
+                                                    {
+                                                        "zonePoiIds":  [
+                                                                           1127,
+                                                                           1130,
+                                                                           1137,
+                                                                           1138
+                                                                       ],
+                                                        "grouped":  true
+                                                    },
+                                                    {
+                                                        "zonePoiIds":  1135,
+                                                        "grouped":  false
+                                                    }
+                                                ]
                                  },
                  "storsie":  {
                                  "bnpc":  10623,
@@ -845,31 +1356,240 @@
                               },
                  "kirlirger_the_abhorrent":  {
                                                  "bnpc":  13360,
-                                                 "rank":  "S"
+                                                 "rank":  "S",
+                                                 "phases":  [
+                                                                {
+                                                                    "zonePoiIds":  [
+                                                                                       1165,
+                                                                                       1166,
+                                                                                       1167,
+                                                                                       1170,
+                                                                                       1171,
+                                                                                       1172,
+                                                                                       1173
+                                                                                   ],
+                                                                    "grouped":  false
+                                                                },
+                                                                {
+                                                                    "zonePoiIds":  [
+                                                                                       1174,
+                                                                                       1175,
+                                                                                       1176,
+                                                                                       1177
+                                                                                   ],
+                                                                    "grouped":  true
+                                                                },
+                                                                {
+                                                                    "zonePoiIds":  1178,
+                                                                    "grouped":  false
+                                                                }
+                                                            ]
                                              },
                  "ihnuxokiy":  {
                                    "bnpc":  13444,
-                                   "rank":  "S"
+                                   "rank":  "S",
+                                   "phases":  [
+                                                  {
+                                                      "zonePoiIds":  [
+                                                                         1184,
+                                                                         1185,
+                                                                         1186,
+                                                                         1187,
+                                                                         1188,
+                                                                         1189,
+                                                                         1190,
+                                                                         1192
+                                                                     ],
+                                                      "grouped":  false
+                                                  },
+                                                  {
+                                                      "zonePoiIds":  [
+                                                                         1193,
+                                                                         1194,
+                                                                         1195,
+                                                                         1196
+                                                                     ],
+                                                      "grouped":  true
+                                                  },
+                                                  {
+                                                      "zonePoiIds":  1197,
+                                                      "grouped":  false
+                                                  }
+                                              ]
                                },
                  "neyoozoteel":  {
                                      "bnpc":  12754,
-                                     "rank":  "S"
+                                     "rank":  "S",
+                                     "phases":  [
+                                                    {
+                                                        "zonePoiIds":  [
+                                                                           1201,
+                                                                           1202,
+                                                                           1203,
+                                                                           1204,
+                                                                           1207,
+                                                                           1208,
+                                                                           1209
+                                                                       ],
+                                                        "grouped":  false
+                                                    },
+                                                    {
+                                                        "zonePoiIds":  [
+                                                                           1210,
+                                                                           1211,
+                                                                           1212,
+                                                                           1213
+                                                                       ],
+                                                        "grouped":  true
+                                                    },
+                                                    {
+                                                        "zonePoiIds":  [
+                                                                           1178,
+                                                                           1197,
+                                                                           1214
+                                                                       ],
+                                                        "grouped":  false
+                                                    }
+                                                ]
                                  },
                  "sansheya":  {
                                   "bnpc":  13399,
-                                  "rank":  "S"
+                                  "rank":  "S",
+                                  "phases":  [
+                                                 {
+                                                     "zonePoiIds":  [
+                                                                        1220,
+                                                                        1221,
+                                                                        1222,
+                                                                        1223,
+                                                                        1224,
+                                                                        1225,
+                                                                        1227,
+                                                                        1228
+                                                                    ],
+                                                     "grouped":  false
+                                                 },
+                                                 {
+                                                     "zonePoiIds":  [
+                                                                        1230,
+                                                                        1231,
+                                                                        1232,
+                                                                        1233
+                                                                    ],
+                                                     "grouped":  true
+                                                 },
+                                                 {
+                                                     "zonePoiIds":  1234,
+                                                     "grouped":  false
+                                                 }
+                                             ]
                               },
                  "atticus_the_primogenitor":  {
                                                   "bnpc":  13156,
-                                                  "rank":  "S"
+                                                  "rank":  "S",
+                                                  "phases":  [
+                                                                 {
+                                                                     "zonePoiIds":  [
+                                                                                        1241,
+                                                                                        1242,
+                                                                                        1243,
+                                                                                        1245,
+                                                                                        1246,
+                                                                                        1247,
+                                                                                        1248
+                                                                                    ],
+                                                                     "grouped":  false
+                                                                 },
+                                                                 {
+                                                                     "zonePoiIds":  [
+                                                                                        1249,
+                                                                                        1250,
+                                                                                        1251,
+                                                                                        1252
+                                                                                    ],
+                                                                     "grouped":  true
+                                                                 },
+                                                                 {
+                                                                     "zonePoiIds":  1253,
+                                                                     "grouped":  false
+                                                                 }
+                                                             ]
                                               },
                  "the_forecaster":  {
                                         "bnpc":  13437,
-                                        "rank":  "S"
+                                        "rank":  "S",
+                                        "phases":  [
+                                                       {
+                                                           "zonePoiIds":  [
+                                                                              1258,
+                                                                              1260,
+                                                                              1262,
+                                                                              1263,
+                                                                              1265,
+                                                                              1266
+                                                                          ],
+                                                           "grouped":  false
+                                                       },
+                                                       {
+                                                           "zonePoiIds":  [
+                                                                              1268,
+                                                                              1269,
+                                                                              1270,
+                                                                              1271
+                                                                          ],
+                                                           "grouped":  true
+                                                       },
+                                                       {
+                                                           "zonePoiIds":  1272,
+                                                           "grouped":  false
+                                                       }
+                                                   ]
                                     },
                  "arch_aethereater":  {
                                           "bnpc":  13406,
-                                          "rank":  "SS"
+                                          "rank":  "SS",
+                                          "phases":  [
+                                                         {
+                                                             "zonePoiIds":  [
+                                                                                1174,
+                                                                                1175,
+                                                                                1176,
+                                                                                1177,
+                                                                                1193,
+                                                                                1194,
+                                                                                1195,
+                                                                                1196,
+                                                                                1210,
+                                                                                1211,
+                                                                                1212,
+                                                                                1213,
+                                                                                1230,
+                                                                                1231,
+                                                                                1232,
+                                                                                1233,
+                                                                                1249,
+                                                                                1250,
+                                                                                1251,
+                                                                                1252,
+                                                                                1268,
+                                                                                1269,
+                                                                                1270,
+                                                                                1271
+                                                                            ],
+                                                             "grouped":  true
+                                                         },
+                                                         {
+                                                             "zonePoiIds":  [
+                                                                                1178,
+                                                                                1197,
+                                                                                1214,
+                                                                                1234,
+                                                                                1253,
+                                                                                1272
+                                                                            ],
+                                                             "grouped":  false
+                                                         }
+                                                     ]
                                       }
              },
     "dataCenters":  {

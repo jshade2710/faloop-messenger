@@ -645,6 +645,15 @@ internal static class SpawnCardRenderer
             Seg("JUST RELEASED", ImGui.GetColorU32(Theme.PullReady));
             Sep();
         }
+        // Phase indicator for multi-phase (SS-rank + precursor) spawns. The
+        // spawn_progress handler advances Stage as the hunt narrows down;
+        // this badge surfaces "we're on phase N" so users can tell how
+        // close the actual SS pull is.
+        else if (spawn.IsSS && spawn.Stage.HasValue && spawn.Stage.Value > 0)
+        {
+            Seg($"PHASE {spawn.Stage.Value}", ImGui.GetColorU32(Theme.RouteHint));
+            Sep();
+        }
         else if (spawn.IsScheduled)
         {
             // Three sub-forms of "not yet public" — distinct labels so the
