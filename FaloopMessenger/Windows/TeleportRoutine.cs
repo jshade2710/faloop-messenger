@@ -60,12 +60,168 @@ internal static class TeleportRoutine
         }
     }
 
-    // Prints a clickable map link to local Echo chat. Does NOT auto-open the
-    // map / plant the flag — that's a separate explicit action (click the
-    // map thumbnail on the card).
+    // Build a chat-train-style spawn message in the form
+    //
+    //   [HunterMarkS] Marilith [CrossWorld] Siren [Instance2] <flag>
+    //
+    // The flag autotranslate references the user's currently-planted flag —
+    // so we plant it at the spawn coords first to make sure clicking it
+    // teleports the recipient to the right spot, not wherever the user
+    // last had a flag. The message is printed to local /echo as a preview
+    // AND copied to clipboard (icons stripped, "<flag>" preserved literally
+    // since FFXIV's chat input auto-expands the typed token) so the user
+    // can paste straight into FC chat or a linkshell.
+    //
+    // Future v0.5+: this will become the relay entry-point that sends to
+    // user-checked cross-world linkshells / linkshells via chat-input
+    // automation (see roadmap).
     public static void Ping(SpawnInfo spawn)
     {
-        Plugin.PrintSpawnEcho(spawn);
+        try
+        {
+            // Plant the flag first so <flag> in the message resolves to the
+            // spawn point (multi-POI SS spawns use the first reported point).
+            if (spawn.TerritoryId > 0 && spawn.MapId > 0 &&
+                (spawn.X > 0 && spawn.Y > 0))
+            {
+                var link = new Dalamud.Game.Text.SeStringHandling.Payloads.MapLinkPayload(
+                    spawn.TerritoryId, spawn.MapId, spawn.X, spawn.Y);
+                Plugin.GameGui.OpenMapWithMapLink(link);
+            }
+
+            // Build the rich SeString for local echo (full icons).
+            var rank   = spawn.IsSS ? "SS" : spawn.Rank.ToString();
+            var sb     = new Dalamud.Game.Text.SeStringHandling.SeStringBuilder();
+
+            // Hunt rank icon — falls back to bracketed text on enum mismatch.
+            TryAddRankIcon(sb, spawn.Rank, spawn.IsSS, $"[{rank}] ");
+
+            sb.AddText(spawn.MobName).AddText(" ");
+
+            // World decoration icon (the ❀ that prefixes a visiting player's
+            // world name on the FC roster / chat). Falls back to "on " if
+            // the enum value isn't available.
+            TryAddIcon(sb, "CrossWorld", " on ");
+            sb.AddText(spawn.World);
+
+            // Instance indicator on the same line.
+            if (spawn.ZoneInstance > 0)
+            {
+                sb.AddText(" ");
+                TryAddInstanceIcon(sb, spawn.ZoneInstance, $"i{spawn.ZoneInstance}");
+            }
+
+            sb.AddText(" ");
+            // <flag> autotranslate. The (group, key) is FFXIV's
+            // autotranslate table for the Sort-Map-Flag phrase. The
+            // safest fallback is the literal "<flag>" string, which the
+            // game's chat input also auto-expands when typed.
+            TryAddFlagAutoTranslate(sb, "<flag>");
+
+            // Local echo preview.
+            Plugin.ChatGui.Print(sb.Build());
+
+            // Clipboard copy — plain text only (icons can't survive
+            // clipboard round-trip), with "<flag>" preserved so the
+            // chat input expands it on paste.
+            var inst = spawn.ZoneInstance > 0 ? $" i{spawn.ZoneInstance}" : string.Empty;
+            var plain = $"{rank} {spawn.MobName} {spawn.World}{inst} <flag>";
+            try { ImGui.SetClipboardText(plain); }
+            catch (Exception ex) { Plugin.Log.Warning($"[Faloop] Ping clipboard copy failed: {ex.Message}"); }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.Warning($"[Faloop] Ping failed: {ex.Message}");
+        }
+    }
+
+    // ── Icon-payload helpers ──────────────────────────────────────────
+    //
+    // BitmapFontIcon's enum members vary slightly between Dalamud versions
+    // (HunterMarkS vs MarkS, CrossWorld vs WorldTraveling, etc.). Rather
+    // than hard-pin a name and risk a runtime mismatch, we resolve by
+    // string and gracefully fall back to plain text. The icons themselves
+    // are non-essential — message readability survives without them.
+
+    private static void TryAddRankIcon(
+        Dalamud.Game.Text.SeStringHandling.SeStringBuilder sb,
+        HuntRank rank, bool isSS, string fallback)
+    {
+        // Try a few likely enum names in priority order. SS shares the S
+        // icon on FFXIV's hunt board (no distinct SS pictograph).
+        var names = (rank, isSS) switch
+        {
+            (_, true)       => new[] { "HuntingLogRefresh", "HunterMarkS", "MarkS" },
+            (HuntRank.S, _) => new[] { "HunterMarkS", "MarkS" },
+            (HuntRank.A, _) => new[] { "HunterMarkA", "MarkA" },
+            (HuntRank.B, _) => new[] { "HunterMarkB", "MarkB" },
+            _               => Array.Empty<string>(),
+        };
+        foreach (var n in names) if (TryAddIcon(sb, n, null)) return;
+        sb.AddText(fallback);
+    }
+
+    private static void TryAddInstanceIcon(
+        Dalamud.Game.Text.SeStringHandling.SeStringBuilder sb,
+        int inst, string fallback)
+    {
+        if (inst >= 1 && inst <= 9)
+        {
+            if (TryAddIcon(sb, $"Instance{inst}", null)) return;
+        }
+        sb.AddText(fallback);
+    }
+
+    // Returns true if an icon payload was successfully appended.
+    private static bool TryAddIcon(
+        Dalamud.Game.Text.SeStringHandling.SeStringBuilder sb,
+        string enumName, string? fallback)
+    {
+        try
+        {
+            var iconType  = typeof(Dalamud.Game.Text.SeStringHandling.Payloads.IconPayload).Assembly
+                .GetType("Dalamud.Game.Text.SeStringHandling.BitmapFontIcon");
+            if (iconType == null)
+            {
+                if (fallback != null) sb.AddText(fallback);
+                return false;
+            }
+            if (!Enum.TryParse(iconType, enumName, out var val) || val == null)
+            {
+                if (fallback != null) sb.AddText(fallback);
+                return false;
+            }
+            var payload = (Dalamud.Game.Text.SeStringHandling.Payloads.IconPayload)
+                Activator.CreateInstance(typeof(Dalamud.Game.Text.SeStringHandling.Payloads.IconPayload),
+                    val)!;
+            sb.Add(payload);
+            return true;
+        }
+        catch
+        {
+            if (fallback != null) sb.AddText(fallback);
+            return false;
+        }
+    }
+
+    private static void TryAddFlagAutoTranslate(
+        Dalamud.Game.Text.SeStringHandling.SeStringBuilder sb,
+        string fallback)
+    {
+        // The "<flag>" autotranslate in FFXIV's chat input is the Sort/
+        // Map/Flag phrase. Its (sheet, row) varies by patch but Dalamud
+        // exposes AutoTranslatePayload(uint group, uint key). We try
+        // the well-known classic value (group=33, key=89 — historically
+        // the flag autotranslate) and fall back to literal text on miss.
+        try
+        {
+            var payload = new Dalamud.Game.Text.SeStringHandling.Payloads.AutoTranslatePayload(33, 89);
+            sb.Add(payload);
+        }
+        catch
+        {
+            sb.AddText(fallback);
+        }
     }
 
     // Open Party Finder pre-filled for a hunt: Hunt category, "S Rank"
