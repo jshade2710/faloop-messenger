@@ -85,18 +85,35 @@ internal static class SpawnCardRenderer
 
     public static void DrawCard(SpawnInfo spawn, FaloopSocketClient client, bool compact)
     {
-        using var lw = Plugin.FontWorld.Lock();
-        using var lt = Plugin.FontTitle.Lock();
-        using var lm = Plugin.FontMedium.Lock();
-        _fWorld = lw.ImFont; _fTitle = lt.ImFont; _fMedium = lm.ImFont;
+        // FontAtlas rebuilds are async — when RebuildFonts() fires from the
+        // UI Scale slider, .Lock() throws "did not built the requested handle
+        // yet" for one or more frames. Catch and skip the card this frame;
+        // the next frame after the atlas finishes will draw it cleanly.
+        Dalamud.Interface.ManagedFontAtlas.ILockedImFont? lw = null, lt = null, lm = null;
+        try
+        {
+            lw = Plugin.FontWorld.Lock();
+            lt = Plugin.FontTitle.Lock();
+            lm = Plugin.FontMedium.Lock();
+        }
+        catch (InvalidOperationException) { lw?.Dispose(); lt?.Dispose(); lm?.Dispose(); return; }
 
-        if (compact) DrawCompactCard(spawn, client);
-        else         DrawStandardCard(spawn, client);
+        using (lw) using (lt) using (lm)
+        {
+            _fWorld = lw.ImFont; _fTitle = lt.ImFont; _fMedium = lm.ImFont;
+
+            if (compact) DrawCompactCard(spawn, client);
+            else         DrawStandardCard(spawn, client);
+        }
     }
 
     public static void DrawDeadRow(SpawnInfo spawn)
     {
-        using var lm = Plugin.FontMedium.Lock();
+        Dalamud.Interface.ManagedFontAtlas.ILockedImFont? lm;
+        try { lm = Plugin.FontMedium.Lock(); }
+        catch (InvalidOperationException) { return; }
+        using (lm)
+        {
         _fMedium = lm.ImFont;
 
         var DeadH = S(30f);
@@ -129,6 +146,7 @@ internal static class SpawnCardRenderer
 
         ImGui.Dummy(new Vector2(width, DeadH));
         ImGui.Spacing();
+        }
     }
 
     // ── Standard 116 px card ─────────────────────────────────────────
