@@ -631,9 +631,17 @@ public class FaloopSocketClient : IDisposable
                 foreach (var pe in pois.EnumerateArray())
                 {
                     if (pe.ValueKind != JsonValueKind.Number) continue;
-                    if (FaloopData.Locations.TryGetValue(pe.GetInt32(), out var ploc) &&
+                    var poiId = pe.GetInt32();
+                    if (FaloopData.Locations.TryGetValue(poiId, out var ploc) &&
                         TryParseRaw(ploc, out var px, out var py))
                         rawPts.Add((px, py));
+                    else
+                        // Loud warning: a missing POI is a data-gap bug, not a
+                        // runtime condition. The card will render markerless
+                        // and we want to know which IDs need to be added.
+                        Plugin.Log.Warning(
+                            $"[Faloop] Unknown zonePoiId {poiId} in zone " +
+                            $"'{zoneSlug}' (mob {mobSlug}). Add to faloop-data.json.");
                 }
         }
 
