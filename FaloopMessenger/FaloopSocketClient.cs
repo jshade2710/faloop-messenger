@@ -595,7 +595,15 @@ public class FaloopSocketClient : IDisposable
             _         => HuntRank.S,   // S and SS map to S
         };
 
-        if (_config.OnlySRanks && rank != HuntRank.S) return;
+        // Per-rank toggle. S also covers SS (collapsed in the mapping above).
+        var rankAllowed = rank switch
+        {
+            HuntRank.S => _config.ShowSRanks,
+            HuntRank.A => _config.ShowARanks,
+            HuntRank.B => _config.ShowBRanks,
+            _          => false,
+        };
+        if (!rankAllowed) return;
 
         // Resolve world name via Lumina
         FaloopData.Worlds.TryGetValue(worldSlug, out var worldId);

@@ -15,7 +15,34 @@ public class ConfigWindow : Window, IDisposable
 
     private bool _showPassword;
 
-    private static readonly string[] DcOptions = { "All", "Aether" };
+    // DC options enumerated from FaloopData at draw time, grouped by region
+    // and ordered so the user's likely choice is near the top of each
+    // group. "All" leads as the no-filter sentinel. Falls back to the
+    // hard-coded list if the data file is missing entries.
+    private static readonly string[] DcRegionOrder =
+    {
+        "All",
+        // NA
+        "Aether", "Crystal", "Primal", "Dynamis",
+        // EU
+        "Chaos", "Light", "Shadow",
+        // JP
+        "Elemental", "Gaia", "Mana", "Meteor",
+        // OCE
+        "Materia",
+    };
+    private static string[] BuildDcOptions()
+    {
+        var known = FaloopData.DataCenters.Keys;
+        var ordered = new List<string> { "All" };
+        foreach (var name in DcRegionOrder)
+            if (name != "All" && known.Contains(name)) ordered.Add(name);
+        // Any DC in our data we didn't anticipate (future additions): append.
+        foreach (var name in known)
+            if (!ordered.Contains(name)) ordered.Add(name);
+        return ordered.ToArray();
+    }
+    private static readonly string[] DcOptions = BuildDcOptions();
 
     // Expansion → display label for the per-expansion filter checklist.
     private static readonly (Expansion exp, string label)[] Expansions =
@@ -250,16 +277,32 @@ public class ConfigWindow : Window, IDisposable
         // ── RANK ──────────────────────────────────────────────────────
         Section("RANK");
 
-        var onlyS = Config.OnlySRanks;
-        if (ImGui.Checkbox("Show S-ranks only", ref onlyS))
+        ImGui.TextWrapped(
+            "Pick which hunt ranks reach you. S also covers SS spawns. " +
+            "A-ranks are useful for relic books / hunt log; B-ranks " +
+            "rarely matter outside daily marks.");
+        ImGui.Spacing();
+
+        var s = Config.ShowSRanks;
+        if (ImGui.Checkbox("S-ranks (and SS)##rank_s", ref s))
         {
-            Config.OnlySRanks = onlyS;
+            Config.ShowSRanks = s;
             Config.Save();
         }
-        ImGui.SameLine(0, 6f);
-        ImGui.TextDisabled("(?)");
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("When off, A and B ranks are tracked too (still DC/world/expansion filtered).");
+
+        var a = Config.ShowARanks;
+        if (ImGui.Checkbox("A-ranks##rank_a", ref a))
+        {
+            Config.ShowARanks = a;
+            Config.Save();
+        }
+
+        var b = Config.ShowBRanks;
+        if (ImGui.Checkbox("B-ranks##rank_b", ref b))
+        {
+            Config.ShowBRanks = b;
+            Config.Save();
+        }
     }
 
     // ── Appearance ───────────────────────────────────────────────────

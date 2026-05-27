@@ -43,8 +43,22 @@ public class Configuration : IPluginConfiguration
     // Connection — /comms/socket.io is the correct Socket.IO path on faloop.app
     public string SocketUrl { get; set; } = "wss://faloop.app/comms/socket.io/?EIO=4&transport=websocket";
 
-    // Filtering
-    public bool   OnlySRanks { get; set; } = true;
+    // Filtering — per-rank toggles. S is default on, A and B default off
+    // (most users only care about S/SS for hunt-train purposes). A-ranks
+    // are useful for relic books / hunt log; B-ranks rarely matter outside
+    // hunt-mark dailies. The old single OnlySRanks bool is migrated in
+    // LoadSecrets() — see MigrateRankFilter — so saved configs upgrade
+    // cleanly: OnlySRanks=true → {S=true,A=false,B=false},
+    //          OnlySRanks=false → {S=true,A=true,B=true}.
+    public bool ShowSRanks { get; set; } = true;
+    public bool ShowARanks { get; set; } = false;
+    public bool ShowBRanks { get; set; } = false;
+
+    // Kept on the schema so existing configs deserialise without losing
+    // their saved value; consumed by MigrateRankFilter() then ignored.
+    // Treated as 'unset' when null in old configs (default true via JSON).
+    public bool? OnlySRanks { get; set; } = null;
+
     public string DataCenter { get; set; } = "Aether"; // "" / "All" = no filter
 
     // Per-world filter (subset of the data center). Off by default so existing
@@ -121,9 +135,29 @@ public class Configuration : IPluginConfiguration
         // as plaintext (JsonExtensionData round-trips otherwise).
         var hadLegacy = _legacy.Remove("Password");
 
+        // Pre-v0.4.5 had a single OnlySRanks bool. Migrate to the per-rank
+        // toggle trio if we still have a saved value. True kept the legacy
+        // S-only behaviour; false meant "S + A + B" (the legacy "off"
+        // semantics — there was no separate A/B distinction). Either way
+        // we clear OnlySRanks after migrating so this only runs once.
+        var migratedRanks = false;
+        if (OnlySRanks.HasValue)
+        {
+            if (OnlySRanks.Value)
+            {
+                ShowSRanks = true; ShowARanks = false; ShowBRanks = false;
+            }
+            else
+            {
+                ShowSRanks = true; ShowARanks = true;  ShowBRanks = true;
+            }
+            OnlySRanks = null;
+            migratedRanks = true;
+        }
+
         // A migration write is needed if we recovered a legacy password that
-        // isn't yet sealed.
-        return hadLegacy && !string.IsNullOrEmpty(Password);
+        // isn't yet sealed, OR we migrated the rank filter.
+        return migratedRanks || (hadLegacy && !string.IsNullOrEmpty(Password));
     }
 
     // Seal the password before handing the object to Dalamud's serializer so
