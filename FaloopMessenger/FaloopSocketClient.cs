@@ -595,24 +595,29 @@ public class FaloopSocketClient : IDisposable
             _         => HuntRank.S,   // S and SS map to S
         };
 
-        // Per-rank toggle. S also covers SS (collapsed in the mapping above).
-        var rankAllowed = rank switch
-        {
-            HuntRank.S => _config.ShowSRanks,
-            HuntRank.A => _config.ShowARanks,
-            HuntRank.B => _config.ShowBRanks,
-            _          => false,
-        };
+        // Per-rank toggle + per-rank scope (DC / world whitelist). S also
+        // covers SS (collapsed in the mapping above). B-rank tracking was
+        // removed in v0.4.6 — any incoming B is dropped before the per-
+        // rank scope lookup so we don't waste a dictionary access.
+        if (rank == HuntRank.B) return;
+
+        var rankAllowed   = rank == HuntRank.S ? _config.ShowSRanks : _config.ShowARanks;
         if (!rankAllowed) return;
+
+        var scopeDc       = rank == HuntRank.S ? _config.SDataCenter        : _config.ADataCenter;
+        var scopeWfOn     = rank == HuntRank.S ? _config.SWorldFilterEnabled : _config.AWorldFilterEnabled;
+        var scopeWfList   = rank == HuntRank.S ? _config.SWorldWhitelist     : _config.AWorldWhitelist;
 
         // Resolve world name via Lumina
         FaloopData.Worlds.TryGetValue(worldSlug, out var worldId);
         var worldName = (worldId > 0 ? LookupWorldName(worldId) : null) ?? worldSlug;
 
-        // Data center filter
-        if (!string.IsNullOrEmpty(_config.DataCenter) &&
-            !_config.DataCenter.Equals("All", StringComparison.OrdinalIgnoreCase) &&
-            FaloopData.DataCenters.TryGetValue(_config.DataCenter, out var dcWorlds) &&
+        // Data center filter — uses the per-rank scope captured above
+        // (S-rank events filter against SDataCenter, A-rank against
+        // ADataCenter). Empty or "All" disables the filter.
+        if (!string.IsNullOrEmpty(scopeDc) &&
+            !scopeDc.Equals("All", StringComparison.OrdinalIgnoreCase) &&
+            FaloopData.DataCenters.TryGetValue(scopeDc, out var dcWorlds) &&
             !dcWorlds.Contains(worldId))
         {
             return;
@@ -620,7 +625,7 @@ public class FaloopSocketClient : IDisposable
 
         // Per-world filter (a subset of the DC the user explicitly ticked).
         // Only applies when enabled; the empty/disabled case keeps the full DC.
-        if (_config.WorldFilterEnabled && !_config.WorldWhitelist.Contains((int)worldId))
+        if (scopeWfOn && !scopeWfList.Contains((int)worldId))
             return;
 
         // The nested "data" object holds spawn-specific fields (Spawn record)

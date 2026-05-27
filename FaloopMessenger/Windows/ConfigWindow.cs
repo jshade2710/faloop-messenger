@@ -15,34 +15,65 @@ public class ConfigWindow : Window, IDisposable
 
     private bool _showPassword;
 
-    // DC options enumerated from FaloopData at draw time, grouped by region
-    // and ordered so the user's likely choice is near the top of each
-    // group. "All" leads as the no-filter sentinel. Falls back to the
-    // hard-coded list if the data file is missing entries.
-    private static readonly string[] DcRegionOrder =
+    // Region grouping for the two-step Region → DataCenter cascade in the
+    // Filters tab. "All" is a no-filter sentinel; the four real regions
+    // narrow the DC dropdown to just that region's data centers.
+    private static readonly string[] RegionOptions = { "All", "NA", "EU", "JP", "OCE" };
+
+    private static readonly Dictionary<string, string> DcRegion = new(StringComparer.OrdinalIgnoreCase)
     {
-        "All",
-        // NA
-        "Aether", "Crystal", "Primal", "Dynamis",
-        // EU
-        "Chaos", "Light", "Shadow",
-        // JP
-        "Elemental", "Gaia", "Mana", "Meteor",
-        // OCE
-        "Materia",
+        ["Aether"]    = "NA",
+        ["Crystal"]   = "NA",
+        ["Primal"]    = "NA",
+        ["Dynamis"]   = "NA",
+        ["Chaos"]     = "EU",
+        ["Light"]     = "EU",
+        ["Shadow"]    = "EU",
+        ["Elemental"] = "JP",
+        ["Gaia"]      = "JP",
+        ["Mana"]      = "JP",
+        ["Meteor"]    = "JP",
+        ["Materia"]   = "OCE",
     };
-    private static string[] BuildDcOptions()
+
+    // Stable per-region DC ordering — alphabetical within each region, the
+    // "All" pseudo-region shows DCs in canonical NA→EU→JP→OCE order.
+    private static string[] DcsForRegion(string region)
     {
-        var known = FaloopData.DataCenters.Keys;
-        var ordered = new List<string> { "All" };
-        foreach (var name in DcRegionOrder)
-            if (name != "All" && known.Contains(name)) ordered.Add(name);
-        // Any DC in our data we didn't anticipate (future additions): append.
-        foreach (var name in known)
-            if (!ordered.Contains(name)) ordered.Add(name);
-        return ordered.ToArray();
+        if (region == "All" || string.IsNullOrEmpty(region))
+        {
+            return new[]
+            {
+                "All",
+                "Aether", "Crystal", "Primal", "Dynamis",
+                "Chaos", "Light", "Shadow",
+                "Elemental", "Gaia", "Mana", "Meteor",
+                "Materia",
+            }
+            .Where(dc => dc == "All" || FaloopData.DataCenters.ContainsKey(dc))
+            .ToArray();
+        }
+        return new[] { "All" }
+            .Concat(DcRegion.Where(kv => kv.Value == region)
+                            .Select(kv => kv.Key)
+                            .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+                            .Where(dc => FaloopData.DataCenters.ContainsKey(dc)))
+            .ToArray();
     }
-    private static readonly string[] DcOptions = BuildDcOptions();
+
+    // Resolve the region implied by a currently-selected DC. Used to seed
+    // each scope's region dropdown so the cascade lines up on first draw.
+    private static string RegionForDc(string dc)
+    {
+        if (string.IsNullOrEmpty(dc) || dc.Equals("All", StringComparison.OrdinalIgnoreCase))
+            return "All";
+        return DcRegion.TryGetValue(dc, out var r) ? r : "All";
+    }
+
+    // Transient (not persisted) — which region each scope's dropdown is
+    // currently showing. Initialised from the saved DC on first draw.
+    private string? _sRegion;
+    private string? _aRegion;
 
     // Expansion → display label for the per-expansion filter checklist.
     private static readonly (Expansion exp, string label)[] Expansions =
@@ -88,15 +119,15 @@ public class ConfigWindow : Window, IDisposable
     }
 
     // Worlds belonging to the given data center, resolved to display names via
-    // Lumina and sorted alphabetically. "All"/empty DC falls back to Aether
-    // (the only DC we have a verified world set for). Runs on the framework
-    // (draw) thread, so the Lumina lookup is safe here.
+    // Lumina and sorted alphabetically. "All" / empty DC returns an empty
+    // list — the world picker is only meaningful when a specific DC is
+    // selected. Runs on the framework (draw) thread, so the Lumina lookup
+    // is safe here.
     private static (string label, int key)[] WorldsForDc(string dc)
     {
-        var key = string.IsNullOrEmpty(dc) || dc.Equals("All", StringComparison.OrdinalIgnoreCase)
-            ? "Aether"
-            : dc;
-        if (!FaloopData.DataCenters.TryGetValue(key, out var ids))
+        if (string.IsNullOrEmpty(dc) || dc.Equals("All", StringComparison.OrdinalIgnoreCase))
+            return Array.Empty<(string, int)>();
+        if (!FaloopData.DataCenters.TryGetValue(dc, out var ids))
             return Array.Empty<(string, int)>();
 
         var sheet = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.World>();
@@ -228,59 +259,12 @@ public class ConfigWindow : Window, IDisposable
 
     private void DrawFiltersTab()
     {
-        // ── SCOPE ─────────────────────────────────────────────────────
-        Section("SCOPE — which spawns reach you");
-
-        ImGui.TextColored(Theme.Muted, "Data center");
-        var currentDc = string.IsNullOrEmpty(Config.DataCenter) ? "All" : Config.DataCenter;
-        ImGui.SetNextItemWidth(180f);
-        if (ImGui.BeginCombo("##dc", currentDc))
-        {
-            foreach (var name in DcOptions)
-            {
-                var selected = name.Equals(currentDc, StringComparison.OrdinalIgnoreCase);
-                if (ImGui.Selectable(name, selected))
-                {
-                    Config.DataCenter = name;
-                    Config.Save();
-                }
-                if (selected) ImGui.SetItemDefaultFocus();
-            }
-            ImGui.EndCombo();
-        }
-        ImGui.Spacing();
-
-        var worlds = WorldsForDc(Config.DataCenter);
-        if (worlds.Length == 0)
-            ImGui.TextColored(Theme.Muted, "No world list for this data center.");
-        else
-            FilterPanel(
-                "worlds", "Worlds",
-                "Tick the worlds you want notifications from (e.g. just\n" +
-                "Gilgamesh + Sargatanas). \"All\" = the whole data center.",
-                worlds,
-                () => Config.WorldFilterEnabled,
-                v  => Config.WorldFilterEnabled = v,
-                Config.WorldWhitelist);
-
-        ImGui.Spacing();
-
-        FilterPanel(
-            "exp", "Expansions",
-            "Tick the expansions you want notifications from — e.g. only\n" +
-            "Dawntrail to ignore older-expansion hunt trains.",
-            Expansions.Select(e => (e.label, (int)e.exp)).ToArray(),
-            () => Config.ExpansionFilterEnabled,
-            v  => Config.ExpansionFilterEnabled = v,
-            Config.ExpansionWhitelist);
-
-        // ── RANK ──────────────────────────────────────────────────────
+        // ── RANK toggles up top: they gate which scope sections show ──
         Section("RANK");
 
         ImGui.TextWrapped(
             "Pick which hunt ranks reach you. S also covers SS spawns. " +
-            "A-ranks are useful for relic books / hunt log; B-ranks " +
-            "rarely matter outside daily marks.");
+            "A-ranks are useful for relic books / hunt log.");
         ImGui.Spacing();
 
         var s = Config.ShowSRanks;
@@ -297,12 +281,122 @@ public class ConfigWindow : Window, IDisposable
             Config.Save();
         }
 
-        var b = Config.ShowBRanks;
-        if (ImGui.Checkbox("B-ranks##rank_b", ref b))
+        // Each enabled rank gets its own independent Region → DC → Worlds
+        // scope. Hidden when the rank's toggle is off so the tab stays
+        // short for users who only care about one rank.
+        if (Config.ShowSRanks)
+            DrawScopeBlock(
+                "S",
+                "SCOPE — S/SS RANKS",
+                () => Config.SDataCenter,
+                v  => Config.SDataCenter = v,
+                () => _sRegion ??= RegionForDc(Config.SDataCenter),
+                v  => _sRegion = v,
+                () => Config.SWorldFilterEnabled,
+                v  => Config.SWorldFilterEnabled = v,
+                Config.SWorldWhitelist);
+
+        if (Config.ShowARanks)
+            DrawScopeBlock(
+                "A",
+                "SCOPE — A RANKS",
+                () => Config.ADataCenter,
+                v  => Config.ADataCenter = v,
+                () => _aRegion ??= RegionForDc(Config.ADataCenter),
+                v  => _aRegion = v,
+                () => Config.AWorldFilterEnabled,
+                v  => Config.AWorldFilterEnabled = v,
+                Config.AWorldWhitelist);
+
+        // Expansion filter remains shared across both ranks — narrowing
+        // by ARR/HW/StB/etc applies to whichever rank scopes are active.
+        Section("EXPANSIONS — shared");
+        FilterPanel(
+            "exp", "Expansions",
+            "Tick the expansions you want notifications from — e.g. only\n" +
+            "Dawntrail to ignore older-expansion hunt trains.",
+            Expansions.Select(e => (e.label, (int)e.exp)).ToArray(),
+            () => Config.ExpansionFilterEnabled,
+            v  => Config.ExpansionFilterEnabled = v,
+            Config.ExpansionWhitelist);
+    }
+
+    // One Region → DataCenter → Worlds cascade for a single rank scope.
+    // idTag must be unique across calls (drives ImGui IDs); body wiring
+    // (getters / setters / list) is passed in so this is rank-agnostic.
+    private void DrawScopeBlock(
+        string idTag, string sectionTitle,
+        Func<string> dcGet, Action<string> dcSet,
+        Func<string> regionGet, Action<string> regionSet,
+        Func<bool> wfEnabledGet, Action<bool> wfEnabledSet,
+        List<int> whitelist)
+    {
+        Section(sectionTitle);
+
+        // Region narrows the DC dropdown to one geographic area.
+        ImGui.TextColored(Theme.Muted, "Region");
+        var currentRegion = regionGet();
+        ImGui.SetNextItemWidth(140f);
+        if (ImGui.BeginCombo($"##region_{idTag}", currentRegion))
         {
-            Config.ShowBRanks = b;
-            Config.Save();
+            foreach (var name in RegionOptions)
+            {
+                var selected = name.Equals(currentRegion, StringComparison.OrdinalIgnoreCase);
+                if (ImGui.Selectable(name, selected))
+                {
+                    regionSet(name);
+                    // Snap DC to "All" if the saved DC isn't in the new
+                    // region — prevents a stale "Crystal" hanging around
+                    // after switching the region dropdown to EU.
+                    if (name != "All" &&
+                        DcRegion.TryGetValue(dcGet(), out var dcReg) &&
+                        !string.Equals(dcReg, name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        dcSet("All");
+                        Config.Save();
+                    }
+                }
+                if (selected) ImGui.SetItemDefaultFocus();
+            }
+            ImGui.EndCombo();
         }
+
+        ImGui.SameLine(0, 16f);
+
+        // DC selector, narrowed by the chosen region.
+        ImGui.TextColored(Theme.Muted, "Data center");
+        ImGui.SameLine();
+        var currentDc = string.IsNullOrEmpty(dcGet()) ? "All" : dcGet();
+        ImGui.SetNextItemWidth(160f);
+        if (ImGui.BeginCombo($"##dc_{idTag}", currentDc))
+        {
+            foreach (var name in DcsForRegion(currentRegion))
+            {
+                var selected = name.Equals(currentDc, StringComparison.OrdinalIgnoreCase);
+                if (ImGui.Selectable(name, selected))
+                {
+                    dcSet(name);
+                    Config.Save();
+                }
+                if (selected) ImGui.SetItemDefaultFocus();
+            }
+            ImGui.EndCombo();
+        }
+        ImGui.Spacing();
+
+        var worlds = WorldsForDc(dcGet());
+        if (worlds.Length == 0)
+            ImGui.TextColored(Theme.Muted, "Pick a specific data center to filter by world.");
+        else
+            FilterPanel(
+                $"worlds_{idTag}", "Worlds",
+                "Tick the worlds you want notifications from (e.g. just\n" +
+                "Gilgamesh + Sargatanas). Empty list = whole DC.",
+                worlds,
+                wfEnabledGet, wfEnabledSet,
+                whitelist);
+
+        ImGui.Spacing();
     }
 
     // ── Appearance ───────────────────────────────────────────────────

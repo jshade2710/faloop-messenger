@@ -43,30 +43,48 @@ public class Configuration : IPluginConfiguration
     // Connection — /comms/socket.io is the correct Socket.IO path on faloop.app
     public string SocketUrl { get; set; } = "wss://faloop.app/comms/socket.io/?EIO=4&transport=websocket";
 
-    // Filtering — per-rank toggles. S is default on, A and B default off
-    // (most users only care about S/SS for hunt-train purposes). A-ranks
-    // are useful for relic books / hunt log; B-ranks rarely matter outside
-    // hunt-mark dailies. The old single OnlySRanks bool is migrated in
-    // LoadSecrets() — see MigrateRankFilter — so saved configs upgrade
-    // cleanly: OnlySRanks=true → {S=true,A=false,B=false},
-    //          OnlySRanks=false → {S=true,A=true,B=true}.
+    // Per-rank toggles. S covers SS. A-ranks default off so the firehose
+    // stays narrow on first run; users opt in when they want relic-book /
+    // hunt-log notifications. B-ranks removed in v0.4.6 — most users never
+    // turned them on, and the per-rank scope split below would have meant
+    // three parallel scope blocks for vanishingly little benefit.
     public bool ShowSRanks { get; set; } = true;
     public bool ShowARanks { get; set; } = false;
-    public bool ShowBRanks { get; set; } = false;
 
-    // Kept on the schema so existing configs deserialise without losing
-    // their saved value; consumed by MigrateRankFilter() then ignored.
-    // Treated as 'unset' when null in old configs (default true via JSON).
-    public bool? OnlySRanks { get; set; } = null;
+    // Schema-only fields kept so old configs deserialise without losing
+    // saved values; consumed by LoadSecrets() then nulled. Treated as
+    // 'unset' when null in fresh configs.
+    public bool? OnlySRanks { get; set; } = null;   // pre-v0.4.5
+    public bool? ShowBRanks { get; set; } = null;   // pre-v0.4.6
 
-    public string DataCenter { get; set; } = "Aether"; // "" / "All" = no filter
+    // ── Per-rank scope ────────────────────────────────────────────────
+    //
+    // S and A ranks each have an INDEPENDENT scope so you can (e.g.) track
+    // S/SS across Aether AND get A-rank pings only from your home world.
+    // Each scope is Region → DataCenter → Worlds[]. Region is UI-only
+    // (derived from DC name); only DC + world whitelist persist.
+    //
+    // Empty/missing/"All" DC = no DC filter (the global firehose, scoped
+    // by the worldlist if WorldFilterEnabled).
+    public string    SDataCenter        { get; set; } = "Aether";
+    public bool      SWorldFilterEnabled { get; set; } = false;
+    public List<int> SWorldWhitelist     { get; set; } = new();
 
-    // Per-world filter (subset of the data center). Off by default so existing
-    // users keep getting the whole DC. When enabled, only spawns on a world in
-    // WorldWhitelist (Lumina World row IDs) notify — everything else is dropped.
-    // World row IDs stored as int (not uint) so the settings UI can drive the
-    // world and expansion pickers through one shared helper. JSON on disk is
-    // identical (plain integers), so existing saved configs load unchanged.
+    public string    ADataCenter        { get; set; } = "Aether";
+    public bool      AWorldFilterEnabled { get; set; } = false;
+    public List<int> AWorldWhitelist     { get; set; } = new();
+
+    // Pre-v0.4.6 had a single shared DC/world filter. Migrated to SDataCenter
+    // / SWorldFilterEnabled / SWorldWhitelist in LoadSecrets(). A-rank
+    // scope defaults to the same values so users who flip A on get the same
+    // scope they had for S (changeable independently after).
+    public string DataCenter { get; set; } = ""; // legacy, migrated then cleared
+
+    // Pre-v0.4.6 single shared world filter (now split into S/A variants
+    // above). Kept on the schema so old configs load — values copied into
+    // SWorldFilterEnabled / SWorldWhitelist in LoadSecrets() and then
+    // cleared. World IDs are int (not uint) so the settings UI can share
+    // one picker helper for worlds and expansions; JSON shape unchanged.
     public bool        WorldFilterEnabled { get; set; } = false;
     public List<int>   WorldWhitelist     { get; set; } = new();
 
@@ -136,28 +154,56 @@ public class Configuration : IPluginConfiguration
         var hadLegacy = _legacy.Remove("Password");
 
         // Pre-v0.4.5 had a single OnlySRanks bool. Migrate to the per-rank
-        // toggle trio if we still have a saved value. True kept the legacy
-        // S-only behaviour; false meant "S + A + B" (the legacy "off"
-        // semantics — there was no separate A/B distinction). Either way
-        // we clear OnlySRanks after migrating so this only runs once.
-        var migratedRanks = false;
+        // pair if a saved value is still present. true → S only; false →
+        // S + A (B was rolled in by the old "off" semantic but is now
+        // dropped per v0.4.6 — see ShowBRanks below).
+        var migrated = false;
         if (OnlySRanks.HasValue)
         {
-            if (OnlySRanks.Value)
-            {
-                ShowSRanks = true; ShowARanks = false; ShowBRanks = false;
-            }
-            else
-            {
-                ShowSRanks = true; ShowARanks = true;  ShowBRanks = true;
-            }
+            ShowSRanks = true;
+            ShowARanks = !OnlySRanks.Value;
             OnlySRanks = null;
-            migratedRanks = true;
+            migrated = true;
+        }
+
+        // Pre-v0.4.6 had a separate ShowBRanks toggle. We dropped B-rank
+        // tracking entirely — clear any saved value so it can't resurrect
+        // when round-tripped.
+        if (ShowBRanks.HasValue)
+        {
+            ShowBRanks = null;
+            migrated = true;
+        }
+
+        // Pre-v0.4.6 had a single DataCenter + WorldFilterEnabled +
+        // WorldWhitelist set shared between all ranks. Now S and A each
+        // own their own scope. Copy the old shared values into the S
+        // scope (default DC for new installs is already "Aether" — the
+        // condition below avoids overwriting an existing user's setting
+        // with an empty migration). A scope inherits the same values so
+        // turning A on doesn't suddenly drop spawns from outside scope.
+        if (!string.IsNullOrEmpty(DataCenter))
+        {
+            SDataCenter = DataCenter;
+            ADataCenter = DataCenter;
+            DataCenter  = string.Empty;
+            migrated = true;
+        }
+        if (WorldFilterEnabled || (WorldWhitelist?.Count ?? 0) > 0)
+        {
+            var src = WorldWhitelist ?? new List<int>();
+            SWorldFilterEnabled = WorldFilterEnabled;
+            SWorldWhitelist     = new List<int>(src);
+            AWorldFilterEnabled = WorldFilterEnabled;
+            AWorldWhitelist     = new List<int>(src);
+            WorldFilterEnabled  = false;
+            WorldWhitelist      = new List<int>();
+            migrated = true;
         }
 
         // A migration write is needed if we recovered a legacy password that
-        // isn't yet sealed, OR we migrated the rank filter.
-        return migratedRanks || (hadLegacy && !string.IsNullOrEmpty(Password));
+        // isn't yet sealed, OR any filter migration occurred.
+        return migrated || (hadLegacy && !string.IsNullOrEmpty(Password));
     }
 
     // Seal the password before handing the object to Dalamud's serializer so
