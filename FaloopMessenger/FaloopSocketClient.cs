@@ -1085,14 +1085,27 @@ public class FaloopSocketClient : IDisposable
 
             var prev = _spawns[idx];
 
-            // Filter the phase's POI list to those that resolve to coords in
-            // our table — implicitly drops POIs from other zones since cross-
-            // zone IDs won't be relevant (every POI lives in exactly one
-            // zone, so unresolved-in-this-context = different zone).
+            // Cross-zone phase POI filter. Some phases (notably arch_aethereater
+            // phase 2) list one POI per zone the SS can spawn in. The naive
+            // narrowing — "include every POI in the phase, convert all with
+            // the spawn's territory SizeFactor" — produced one marker per zone
+            // all rendered in the spawn's own zone's coordinate space. Each
+            // POI's owning zone is now in FaloopData.PoiZones (extracted from
+            // Faloop's Zone.pois definitions); we drop any POI whose owning
+            // zone isn't the spawn's zone, leaving exactly the POIs that
+            // could plausibly contain the mob.
+            var spawnZoneSlug = FaloopData.SlugForTerritory(prev.TerritoryId);
             var narrowedRaw = new List<(int X, int Y)>();
             var narrowedPois = new List<int>();
             foreach (var poiId in phase.ZonePoiIds)
             {
+                // Drop POIs from other zones up-front so we don't waste a
+                // ResolveCoords call and don't produce ghost markers.
+                if (spawnZoneSlug != null &&
+                    FaloopData.PoiZones.TryGetValue(poiId, out var poiZone) &&
+                    !string.Equals(poiZone, spawnZoneSlug, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
                 if (FaloopData.Locations.TryGetValue(poiId, out var ploc) &&
                     TryParseRaw(ploc, out var px, out var py))
                 {
@@ -1102,8 +1115,6 @@ public class FaloopSocketClient : IDisposable
             }
 
             // Convert raw → map coords using the spawn's existing territory.
-            // Local mutable list during build; assigned into the record as
-            // an IReadOnlyList below.
             var built = new List<SpawnPoint>();
             if (prev.TerritoryId > 0)
             {
@@ -1116,14 +1127,11 @@ public class FaloopSocketClient : IDisposable
                 }
             }
 
-            // Filter further by spawn's current zone POIs. If the original
-            // spawn had specific POI markers and at least some of the
-            // narrowed points overlap with the spawn's territory, keep
-            // them; otherwise we'd accidentally show another zone's set.
-            // (gK does this via Zone.forId(zoneId).pois — we approximate
-            // by demanding ResolveCoords succeeded against this territory.)
+            // If filtering knocked everything out (e.g. PoiZones table missing
+            // entries for this mob's POIs), keep the previous markers rather
+            // than show an empty card.
             IReadOnlyList<SpawnPoint> points = built.Count == 0
-                ? prev.Points     // keep the prior cloud (cross-zone phase POI set)
+                ? prev.Points
                 : built;
 
             next = new SpawnInfo

@@ -71,6 +71,13 @@ public static class FaloopData
     // Faloop zone POI ID → raw "x,y" coordinate string (2048-scale)
     public static readonly ReadOnlyDictionary<int, string> Locations = BuildLocations();
 
+    // Faloop zone POI ID → owning zone slug. Used by the spawn_progress
+    // handler to filter multi-zone phase POI lists down to just the spawn's
+    // own zone — without this, a phase-2 cloud with one POI per zone bleeds
+    // POIs from other zones into the markers (extracted from Faloop's Zone
+    // definitions in main.js; matches their authoritative POI ownership).
+    public static readonly ReadOnlyDictionary<int, string> PoiZones = BuildPoiZones();
+
     // ── Builders ──────────────────────────────────────────────────────
 
     private static ReadOnlyDictionary<string, MobData> BuildMobs()
@@ -149,6 +156,20 @@ public static class FaloopData
         var d = new Dictionary<int, string>();
         foreach (var p in FaloopJson.Root.GetProperty("locations").EnumerateObject())
             d[int.Parse(p.Name)] = p.Value.GetString()!;
+        return new ReadOnlyDictionary<int, string>(d);
+    }
+
+    private static ReadOnlyDictionary<int, string> BuildPoiZones()
+    {
+        var d = new Dictionary<int, string>();
+        if (!FaloopJson.Root.TryGetProperty("poiZones", out var section))
+            return new ReadOnlyDictionary<int, string>(d);
+        foreach (var p in section.EnumerateObject())
+        {
+            if (int.TryParse(p.Name, out var id) &&
+                p.Value.ValueKind == JsonValueKind.String)
+                d[id] = p.Value.GetString()!;
+        }
         return new ReadOnlyDictionary<int, string>(d);
     }
 
