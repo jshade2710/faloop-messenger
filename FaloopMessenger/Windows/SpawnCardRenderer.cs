@@ -516,7 +516,13 @@ internal static class SpawnCardRenderer
         }
 
         var full = s;
-        const string ell = "…";
+        // Three ASCII periods, not U+2026. The AXIS game font (FontMedium /
+        // FontTitle / FontWorld) doesn't include the Unicode ellipsis glyph;
+        // ImGui falls back to a substitute character (looks like a middle
+        // dot, indistinguishable from the meta-row separator) and users
+        // couldn't tell text was truncated. "..." renders correctly and
+        // every other measurement here already accounts for its width.
+        const string ell = "...";
         while (s.Length > 1 && Measure(font, px, s + ell).X > maxW)
             s = s[..^1];
         s += ell;
