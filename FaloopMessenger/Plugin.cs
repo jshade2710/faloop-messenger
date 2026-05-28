@@ -52,6 +52,7 @@ public sealed class Plugin : IDalamudPlugin
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        Configuration.EnsureCollectionsInitialised();   // m-5: null guard for hand-edited / corrupt configs
         Config        = Configuration;
 
         // Restore last preferred tracker so auto-open on the first post-
@@ -322,7 +323,14 @@ public sealed class Plugin : IDalamudPlugin
                 if (Configuration.AutoSoundOnSpawn)
                     PlayChatSound(Configuration.SoundEffect);
 
-                if (Configuration.AutoOpenMiniOnSpawn && spawn.Rank == HuntRank.S)
+                // m-6 (v0.4.7 audit): the auto-open used to gate on
+                // HuntRank.S only. With v0.4.5+ A-rank tracking, this meant
+                // A-rank spawns silently arrived in the list but never popped
+                // the window — making the feature feel half-broken. Trust the
+                // upstream rank filter (HandleSpawnAction already dropped any
+                // rank the user didn't opt in to) and pop for anything that
+                // got this far.
+                if (Configuration.AutoOpenMiniOnSpawn)
                     ActiveTracker().IsOpen = true;
             }
             catch (System.Exception ex)
@@ -341,9 +349,10 @@ public sealed class Plugin : IDalamudPlugin
         {
             try
             {
+                var snapshot = Client.GetSnapshot();
                 var live = 0;
-                foreach (var s in Client.GetSnapshot())
-                    if (!s.IsDead && s.Rank == HuntRank.S) live++;
+                for (var i = 0; i < snapshot.Count; i++)
+                    if (!snapshot[i].IsDead && snapshot[i].Rank == HuntRank.S) live++;
 
                 if (Configuration.AutoCloseMiniWhenIdle && _lastLiveSCount > 0 && live == 0)
                     ActiveTracker().IsOpen = false;
@@ -355,6 +364,10 @@ public sealed class Plugin : IDalamudPlugin
                 // outside our explicit setters. Saves only on actual diff
                 // to avoid disk-thrash from the frequent OnUpdate firings.
                 SyncWindowOpenState();
+
+                // M-4 (v0.4.7 audit): drop stale first-render timestamps
+                // for spawns that aged out of the list. Bounded sweep.
+                Windows.SpawnCardRenderer.CullFirstRenderEntries(snapshot);
             }
             catch (System.Exception ex)
             {

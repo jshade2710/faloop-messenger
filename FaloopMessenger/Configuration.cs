@@ -206,15 +206,38 @@ public class Configuration : IPluginConfiguration
         return migrated || (hadLegacy && !string.IsNullOrEmpty(Password));
     }
 
-    // Seal the password before handing the object to Dalamud's serializer so
-    // plaintext never reaches disk.
+    // M-2 fix (v0.4.7 audit): Save() runs from at least three contexts that
+    // can interleave — the websocket receive thread (CacheSession), the
+    // framework thread (SetTracker / SyncWindowOpenState), and the render
+    // thread (config slider). Dalamud's SavePluginConfig writes via
+    // File.WriteAllText without an internal mutex, so concurrent writes can
+    // truncate the JSON file mid-flush → next-load deserialise failure →
+    // settings silently reset to defaults. The lock here serialises every
+    // path through a single critical section.
+    private static readonly object _saveLock = new();
     public void Save()
     {
-        try { ProtectedPassword = Dpapi.Protect(Password ?? string.Empty); }
-        catch (Exception ex)
+        lock (_saveLock)
         {
-            Plugin.Log.Warning($"[Faloop] Password encryption failed: {ex.Message}");
+            try { ProtectedPassword = Dpapi.Protect(Password ?? string.Empty); }
+            catch (Exception ex)
+            {
+                Plugin.Log.Warning($"[Faloop] Password encryption failed: {ex.Message}");
+            }
+            Plugin.PluginInterface.SavePluginConfig(this);
         }
-        Plugin.PluginInterface.SavePluginConfig(this);
+    }
+
+    // m-5 fix (v0.4.7 audit): defensive null-guard for the four filter lists.
+    // The C# property initialisers run on construction, but a hand-edited
+    // config file or an older Dalamud serialiser quirk could deliver a null
+    // and any subsequent .Contains() call would NRE. Call from Plugin() ctor
+    // right after GetPluginConfig.
+    public void EnsureCollectionsInitialised()
+    {
+        SWorldWhitelist    ??= new List<int>();
+        AWorldWhitelist    ??= new List<int>();
+        WorldWhitelist     ??= new List<int>();
+        ExpansionWhitelist ??= new List<int>();
     }
 }

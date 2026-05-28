@@ -166,6 +166,20 @@ public class FaloopSocketClient : IDisposable
                     break;
                 }
 
+                // m-3 (v0.4.7 audit): SocketUrl is a free-text Advanced setting.
+                // The session ID is sent through this socket as the auth token,
+                // so a redirected host could capture a live session. Log a loud
+                // warning when the host isn't faloop.app; don't block (power
+                // users may proxy through a mirror), just surface the surprise.
+                if (!wsUri.Host.Equals("faloop.app", StringComparison.OrdinalIgnoreCase) &&
+                    !wsUri.Host.Equals("www.faloop.app", StringComparison.OrdinalIgnoreCase))
+                {
+                    Plugin.Log.Warning(
+                        $"[Faloop] Socket host is '{wsUri.Host}' (not faloop.app). " +
+                        "Your session ID will be sent to this host. " +
+                        "If you didn't intend this, restore the default URL in Settings → Advanced.");
+                }
+
                 _sessionId = await FetchAnonSession(ct);
 
                 Plugin.Log.Information($"[Faloop] Connecting to {wsUrl}");
@@ -174,12 +188,12 @@ public class FaloopSocketClient : IDisposable
                 ws.Options.SetRequestHeader("Origin",     FaloopOrigin);
                 ws.Options.SetRequestHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0");
 
-                await ws.ConnectAsync(wsUri, ct);
+                await ws.ConnectAsync(wsUri, ct).ConfigureAwait(false);
 
                 connectedAt = DateTime.UtcNow;
                 timeSyncTask ??= TimeSyncLoop(timeSyncCts.Token);
 
-                await RunSession(ws, ct);
+                await RunSession(ws, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
@@ -399,7 +413,7 @@ public class FaloopSocketClient : IDisposable
 
                 do
                 {
-                    result = await ws.ReceiveAsync(new ArraySegment<byte>(buf), ct);
+                    result = await ws.ReceiveAsync(new ArraySegment<byte>(buf), ct).ConfigureAwait(false);
                     Volatile.Write(ref _lastRxTick, Environment.TickCount64);
 
                     if (result.MessageType == WebSocketMessageType.Close)
@@ -417,7 +431,7 @@ public class FaloopSocketClient : IDisposable
                 while (!result.EndOfMessage);
 
                 var text = Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
-                await HandlePacket(text, ws, ct);
+                await HandlePacket(text, ws, ct).ConfigureAwait(false);
             }
         }
         finally
@@ -720,43 +734,24 @@ public class FaloopSocketClient : IDisposable
         // actual time-since-spawn, not time-since-we-saw-the-event.
         var reportedAt = TryParseUtc(GetString(spawnData, "timestamp")) ?? DateTime.Now;
 
-        var spawn = new SpawnInfo
-        {
-            World        = worldName,
-            MobName      = mobName,
-            ZoneName     = zoneName,
-            X            = mapX,
-            Y            = mapY,
-            Rank         = rank,
-            HpPercent    = 100,
-            Reporter     = reporter,
-            ReportedAt   = reportedAt,
-            ZoneInstance = zoneInst,
-            TerritoryId  = territoryId,
-            MapId        = mapId,
-            RawX         = rawX,
-            RawY         = rawY,
-            ZonePoiId    = zonePoiId,
-            Points       = points,
-            IsSS         = mobInfo.Rank == MobRank.SS,
-            IsScheduled  = GetBool(spawnData, "isScheduled"),
-            ScheduleDelay = spawnData.TryGetProperty("scheduleDelay", out var sd) &&
+        // Parse top-level scheduled / stage / scheduleDelay once. We have to
+        // know `wentPublic` BEFORE constructing the SpawnInfo so JustWentPublic
+        // and PublicReleasedAt are set at construction (record is init-only
+        // post-C-1 — no more in-place mutation after the slot replace).
+        var isScheduled  = GetBool(spawnData, "isScheduled");
+        var scheduleDelay = spawnData.TryGetProperty("scheduleDelay", out var sd) &&
                             sd.ValueKind == JsonValueKind.Number &&
-                            sd.TryGetInt32(out var sdv) ? sdv : null,
-            // stage: int? — non-null while in pre-release window, null once
-            // manual release fires. Renderer uses this to flip PRE-RELEASE→
-            // RELEASED instantly, bypassing brittle ReportedAt+delay math.
-            Stage         = spawnData.TryGetProperty("stage", out var st) &&
+                            sd.TryGetInt32(out var sdv) ? (int?)sdv : null;
+        var stage         = spawnData.TryGetProperty("stage", out var st) &&
                             st.ValueKind == JsonValueKind.Number &&
-                            st.TryGetInt32(out var stv) ? stv : null,
-            RawEvent     = mobData.GetRawText(),
-        };
+                            st.TryGetInt32(out var stv) ? (int?)stv : null;
 
         // S-2: Faloop legitimately re-emits `spawn` for the same mark, and a
         // reconnect can replay recent events. Without an identity key that
         // produced duplicate, un-killable cards (death/location only patch the
         // first match). Upsert on (mob, world, instance) while still alive, and
         // only fire the new-spawn alert for a genuinely new entry.
+        SpawnInfo spawn;
         bool isNew;
         lock (_lock)
         {
@@ -766,38 +761,55 @@ public class FaloopSocketClient : IDisposable
                 string.Equals(s.World,   worldName, StringComparison.OrdinalIgnoreCase) &&
                 s.ZoneInstance == zoneInst);
 
+            bool wentPublic = false;
+            DateTime? releasedStamp = null;
             if (idx >= 0)
             {
                 // Watcher for the pre-release/early-access → public transition.
-                // If the card we already had was scheduled (any sub-form:
-                // timed pre-release, untimed pre-release, or permissioned
-                // early-access via stage:null), and THIS event is no longer
-                // scheduled, the mob just went genuinely public. Re-fire
-                // OnNewSpawn so the user gets a fresh ding + echo at the
-                // moment that actually matters for pulling — the previous
-                // pre-release alert was just a heads-up.
+                // Compute *before* constructing the SpawnInfo so the JustWent-
+                // Public flag is set immutably at construction.
                 var prev = _spawns[idx];
-                var wentPublic = prev.IsScheduled && !spawn.IsScheduled;
-                spawn.JustWentPublic = wentPublic;
-                // Stamp the moment of transition so the renderer can show a
-                // visible JUST RELEASED badge (otherwise the badge silently
-                // disappears and users can't tell if the card updated).
-                // Preserve any existing stamp through later refreshes.
-                spawn.PublicReleasedAt = wentPublic
-                    ? TimeSync.ServerNow
-                    : prev.PublicReleasedAt;
-                _spawns[idx] = spawn;   // refresh in place
-                isNew = wentPublic;
+                wentPublic = prev.IsScheduled && !isScheduled;
+                releasedStamp = wentPublic ? TimeSync.ServerNow : prev.PublicReleasedAt;
 
-                // Debug breadcrumb: log every refresh on an existing card so
-                // unexpected event shapes (action names, missing fields) are
-                // visible in /xllog when something doesn't transition as
-                // expected. Cheap — only fires on upserts, not new spawns.
                 Plugin.Log.Debug(
                     $"[Faloop] Refresh {mobName}@{worldName} i{zoneInst}: " +
                     $"prev.scheduled={prev.IsScheduled} stage={prev.Stage?.ToString() ?? "null"} → " +
-                    $"new.scheduled={spawn.IsScheduled} stage={spawn.Stage?.ToString() ?? "null"} " +
+                    $"new.scheduled={isScheduled} stage={stage?.ToString() ?? "null"} " +
                     $"(wentPublic={wentPublic})");
+            }
+
+            spawn = new SpawnInfo
+            {
+                World            = worldName,
+                MobName          = mobName,
+                ZoneName         = zoneName,
+                X                = mapX,
+                Y                = mapY,
+                Rank             = rank,
+                HpPercent        = 100,
+                Reporter         = reporter,
+                ReportedAt       = reportedAt,
+                ZoneInstance     = zoneInst,
+                TerritoryId      = territoryId,
+                MapId            = mapId,
+                RawX             = rawX,
+                RawY             = rawY,
+                ZonePoiId        = zonePoiId,
+                Points           = points,
+                IsSS             = mobInfo.Rank == MobRank.SS,
+                IsScheduled      = isScheduled,
+                ScheduleDelay    = scheduleDelay,
+                Stage            = stage,
+                JustWentPublic   = wentPublic,
+                PublicReleasedAt = releasedStamp,
+                RawEvent         = mobData.GetRawText(),
+            };
+
+            if (idx >= 0)
+            {
+                _spawns[idx] = spawn;   // atomic slot replace — readers never see a torn state
+                isNew = wentPublic;     // only re-fire OnNewSpawn for the scheduled→public flip
             }
             else
             {
@@ -832,37 +844,41 @@ public class FaloopSocketClient : IDisposable
         }
         if (string.IsNullOrEmpty(locationStr)) return;
 
-        SpawnInfo? target;
-        uint       targetTerritory;
+        // C-1 fix: atomic slot replacement instead of in-place mutation. We
+        // hold _lock for the index lookup, the ResolveCoords call (which only
+        // reads Lumina), and the slot swap — so the render thread either sees
+        // the pre-refinement SpawnInfo or the post-refinement one, never a
+        // half-constructed state. Old code mutated target.X/Y/Points while
+        // the renderer could be enumerating spawn.Points — a List<T>
+        // GetEnumerator violation waiting to happen.
+        SpawnInfo? next = null;
         lock (_lock)
         {
-            target = _spawns.Find(s =>
+            var idx = _spawns.FindIndex(s =>
                 string.Equals(s.MobName, mobName, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(s.World, worldName, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(s.World,   worldName, StringComparison.OrdinalIgnoreCase) &&
                 s.ZoneInstance == zoneInst);
-            targetTerritory = target?.TerritoryId ?? 0;
-        }
-        if (target == null) return;
+            if (idx < 0) return;
 
-        var coords = ResolveCoords(targetTerritory, locationStr);
-        if (coords == null) return;
+            var prev   = _spawns[idx];
+            var coords = ResolveCoords(prev.TerritoryId, locationStr);
+            if (coords == null) return;
 
-        // M-1: mutate the shared SpawnInfo under the same lock that guards the
-        // list — the render thread reads these fields off GetSnapshot()'s
-        // shared references, so an unsynchronised write is a data race.
-        lock (_lock)
-        {
-            target.X    = coords.Value.x;
-            target.Y    = coords.Value.y;
-            target.RawX = coords.Value.rawX;
-            target.RawY = coords.Value.rawY;
             // A precise location collapses the POI cloud to one exact point.
-            target.Points.Clear();
-            target.Points.Add(new SpawnPoint(coords.Value.rawX, coords.Value.rawY,
-                                             coords.Value.x, coords.Value.y));
+            var pt = new SpawnPoint(coords.Value.rawX, coords.Value.rawY,
+                                    coords.Value.x,   coords.Value.y);
+            next = prev with
+            {
+                X      = coords.Value.x,
+                Y      = coords.Value.y,
+                RawX   = coords.Value.rawX,
+                RawY   = coords.Value.rawY,
+                Points = new[] { pt },
+            };
+            _spawns[idx] = next;
             RebuildSnapshotLocked();
         }
-        Plugin.Log.Debug($"[Faloop] Updated location for {mobName} on {worldName}: ({coords.Value.x:F1}, {coords.Value.y:F1})");
+        Plugin.Log.Debug($"[Faloop] Updated location for {mobName} on {worldName}: ({next.X:F1}, {next.Y:F1})");
 
         OnUpdate?.Invoke();
     }
@@ -893,6 +909,11 @@ public class FaloopSocketClient : IDisposable
             !int.TryParse(parts[0], out var rawX) ||
             !int.TryParse(parts[1], out var rawY)) return null;
 
+        // m-1 fix (v0.4.7 audit): guard against SizeFactor == 0 (would produce
+        // Infinity coords and render markers off-canvas). Real Lumina rows
+        // always have a non-zero SizeFactor, but a stale/incomplete sheet on
+        // first load briefly returns zero defaults.
+        if (map.Value.SizeFactor == 0) return null;
         var n = 41.0f / (map.Value.SizeFactor / 100.0f);
         return ((float)(rawX / 2048.0 * n + 1), (float)(rawY / 2048.0 * n + 1), rawX, rawY);
     }
@@ -910,18 +931,17 @@ public class FaloopSocketClient : IDisposable
         if (mobData.TryGetProperty("data", out var deathData))
             killedAt = TryParseUtc(GetString(deathData, "startedAt")) ?? DateTime.Now;
 
+        // C-1 fix: replace, don't mutate. See HandleSpawnLocationAction.
         lock (_lock)
         {
-            var match = _spawns.Find(s =>
+            var idx = _spawns.FindIndex(s =>
                 string.Equals(s.MobName, mobName, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(s.World, worldName, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(s.World,   worldName, StringComparison.OrdinalIgnoreCase) &&
                 s.ZoneInstance == zoneInst);
-            if (match != null)
-            {
-                match.IsDead   = true;
-                match.KilledAt = killedAt;
-                RebuildSnapshotLocked();
-            }
+            if (idx < 0) return;
+
+            _spawns[idx] = _spawns[idx] with { IsDead = true, KilledAt = killedAt };
+            RebuildSnapshotLocked();
         }
 
         OnUpdate?.Invoke();
@@ -1082,15 +1102,17 @@ public class FaloopSocketClient : IDisposable
             }
 
             // Convert raw → map coords using the spawn's existing territory.
-            var points = new List<SpawnPoint>();
+            // Local mutable list during build; assigned into the record as
+            // an IReadOnlyList below.
+            var built = new List<SpawnPoint>();
             if (prev.TerritoryId > 0)
             {
                 foreach (var rp in narrowedRaw)
                 {
                     var c = ResolveCoords(prev.TerritoryId, $"{rp.X},{rp.Y}");
                     if (c.HasValue)
-                        points.Add(new SpawnPoint(c.Value.rawX, c.Value.rawY,
-                                                  c.Value.x, c.Value.y));
+                        built.Add(new SpawnPoint(c.Value.rawX, c.Value.rawY,
+                                                 c.Value.x, c.Value.y));
                 }
             }
 
@@ -1100,12 +1122,9 @@ public class FaloopSocketClient : IDisposable
             // them; otherwise we'd accidentally show another zone's set.
             // (gK does this via Zone.forId(zoneId).pois — we approximate
             // by demanding ResolveCoords succeeded against this territory.)
-            if (points.Count == 0)
-            {
-                // Nothing resolved in this zone — likely a cross-zone POI
-                // set we shouldn't apply to this spawn. Keep prev points.
-                points = prev.Points;
-            }
+            IReadOnlyList<SpawnPoint> points = built.Count == 0
+                ? prev.Points     // keep the prior cloud (cross-zone phase POI set)
+                : built;
 
             next = new SpawnInfo
             {
@@ -1226,11 +1245,19 @@ public class FaloopSocketClient : IDisposable
 
     public void Dispose()
     {
-        _cts.Cancel();
-        // Give the loop a moment to unwind on unload; it exits promptly on
-        // cancellation (ReceiveAsync throws, Task.Delay cancels).
-        try { _loopTask?.Wait(TimeSpan.FromSeconds(2)); }
-        catch { /* AggregateException(OperationCanceled) — expected */ }
-        _cts.Dispose();
+        // M-1 fix (v0.4.7 audit): never block the framework thread on
+        // _loopTask.Wait(). Dalamud calls Dispose on the framework thread —
+        // a synchronous Wait both stalls the game (up to 2s) and risks a
+        // hard deadlock if any future continuation in the loop tries to
+        // RunOnFrameworkThread. Cancel and let the loop unwind asynchronously;
+        // dispose the CTS from a fire-and-forget continuation on the thread
+        // pool so it can never be touched after Dispose returns.
+        var cts = _cts;
+        var task = _loopTask ?? Task.CompletedTask;
+        try { cts.Cancel(); } catch { /* already disposed */ }
+        _ = task.ContinueWith(_ =>
+        {
+            try { cts.Dispose(); } catch { /* already disposed */ }
+        }, TaskScheduler.Default);
     }
 }

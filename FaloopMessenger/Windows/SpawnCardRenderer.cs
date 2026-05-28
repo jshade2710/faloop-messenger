@@ -13,7 +13,34 @@ namespace FaloopMessenger.Windows;
 internal static class SpawnCardRenderer
 {
     // ── Per-spawn state (shared across windows) ───────────────────────
+    // Keyed on spawn.ReportedAt.Ticks. Touched only from the render thread
+    // (which is the framework thread), so a plain Dictionary is fine.
     private static readonly Dictionary<long, DateTime> _firstRenderAt = new();
+
+    // M-4 fix (v0.4.7 audit): drop entries that no longer correspond to a
+    // tracked spawn. Without this the dictionary grew monotonically over a
+    // session (entries only cleared on explicit dismiss-click — died spawns
+    // aged out of _spawns but their _firstRenderAt entry lingered). Called
+    // from Plugin.HandleSpawnsChanged.
+    internal static void CullFirstRenderEntries(IReadOnlyList<SpawnInfo> live)
+    {
+        if (_firstRenderAt.Count == 0) return;
+        var alive = new HashSet<long>(live.Count);
+        for (var i = 0; i < live.Count; i++) alive.Add(live[i].ReportedAt.Ticks);
+
+        // Iterate to a buffer first — can't mutate the dictionary during enumeration.
+        List<long>? doomed = null;
+        foreach (var key in _firstRenderAt.Keys)
+        {
+            if (!alive.Contains(key))
+            {
+                doomed ??= new List<long>();
+                doomed.Add(key);
+            }
+        }
+        if (doomed != null)
+            foreach (var k in doomed) _firstRenderAt.Remove(k);
+    }
 
     // All colour constants live in Theme.cs.
 
@@ -177,7 +204,7 @@ internal static class SpawnCardRenderer
             {
                 client.RemoveSpawn(spawn);
                 _firstRenderAt.Remove(spawnKey);
-                TeleportRoutine.InProgress.Remove(spawnKey);
+                TeleportRoutine.ClearInProgress(spawnKey);
                 return;
             }
 
@@ -289,7 +316,7 @@ internal static class SpawnCardRenderer
             {
                 client.RemoveSpawn(spawn);
                 _firstRenderAt.Remove(spawnKey);
-                TeleportRoutine.InProgress.Remove(spawnKey);
+                TeleportRoutine.ClearInProgress(spawnKey);
                 return;
             }
 
@@ -734,14 +761,24 @@ internal static class SpawnCardRenderer
                                                  float x0, float y0,
                                                  float btnW, float btnH, float gap, long spawnKey)
     {
-        var canAct = spawn.TerritoryId > 0;
-        var isTP   = TeleportRoutine.InProgress.Contains(spawnKey);
+        var canAct  = spawn.TerritoryId > 0;
+        var isTP    = TeleportRoutine.IsInProgress(spawnKey);
+        var hasLife = TeleportRoutine.LifestreamAvailable;
         var sz = new Vector2(btnW, btnH);
         var y  = y0;
 
-        DrawButton(dl, isTP ? "TP'ing…" : "Teleport", $"##tp_{spawnKey}",
-            new Vector2(x0, y), sz, primary: true, disabled: isTP || !canAct,
+        // M-3: disable Teleport (with tooltip) when Lifestream isn't installed.
+        // Without this guard the button clicks no-op silently and the user
+        // assumes the plugin is broken.
+        DrawButton(dl,
+            !hasLife ? "No Lifestream" : isTP ? "TP'ing…" : "Teleport",
+            $"##tp_{spawnKey}",
+            new Vector2(x0, y), sz, primary: true,
+            disabled: isTP || !canAct || !hasLife,
             () => TeleportRoutine.Teleport(spawn));
+        if (!hasLife && ImGui.IsItemHovered())
+            using (ImRaii.Tooltip())
+                ImGui.TextUnformatted("Teleport requires the Lifestream plugin.");
         y += btnH + gap;
 
         // Flag removed — clicking the map thumbnail places the flag now.
@@ -755,13 +792,19 @@ internal static class SpawnCardRenderer
     private static void DrawActionButtonsCompact(ImDrawListPtr dl, SpawnInfo spawn,
                                                  float x0, float y0, long spawnKey)
     {
-        var canAct = spawn.TerritoryId > 0;
-        var isTP   = TeleportRoutine.InProgress.Contains(spawnKey);
+        var canAct  = spawn.TerritoryId > 0;
+        var isTP    = TeleportRoutine.IsInProgress(spawnKey);
+        var hasLife = TeleportRoutine.LifestreamAvailable;
         var sz = new Vector2(CmpButtonW, CmpBtnH);
         var x  = x0;
 
-        DrawButton(dl, isTP ? "TP…" : "TP", $"##tp_{spawnKey}", new Vector2(x, y0), sz,
-            primary: true, disabled: isTP || !canAct, () => TeleportRoutine.Teleport(spawn));
+        DrawButton(dl, !hasLife ? "—" : isTP ? "TP…" : "TP",
+            $"##tp_{spawnKey}", new Vector2(x, y0), sz,
+            primary: true, disabled: isTP || !canAct || !hasLife,
+            () => TeleportRoutine.Teleport(spawn));
+        if (!hasLife && ImGui.IsItemHovered())
+            using (ImRaii.Tooltip())
+                ImGui.TextUnformatted("Teleport requires the Lifestream plugin.");
         x += CmpButtonW + CmpBtnGap;
 
         // Compact has no map thumbnail to click, so Flag lives here.

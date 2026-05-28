@@ -12,9 +12,41 @@ namespace FaloopMessenger.Windows;
 // (Main / Mini / Compact) can call them uniformly.
 internal static class TeleportRoutine
 {
-    // Spawn keys currently mid-teleport → drives the TP-button loading state
-    // for whichever window is rendering the card.
-    internal static readonly HashSet<long> InProgress = new();
+    // M-6 fix (v0.4.7 audit): InProgress is touched from the render thread
+    // (button click → Add, Contains) AND from Teleport()'s async continuation
+    // (Remove in finally). HashSet<T> isn't thread-safe; ConcurrentDictionary
+    // is, and a key-only set falls out of `ConcurrentDictionary<long, byte>`.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<long, byte> _inProgress = new();
+
+    /// <summary>Whether a spawn is currently mid-teleport (drives the "TP'ing…"
+    /// button state for whichever window is rendering the card).</summary>
+    internal static bool IsInProgress(long spawnKey) => _inProgress.ContainsKey(spawnKey);
+
+    /// <summary>Remove a spawn's in-progress marker. Idempotent; safe across
+    /// threads. Used by the renderer's dismiss-spawn path.</summary>
+    internal static void ClearInProgress(long spawnKey) => _inProgress.TryRemove(spawnKey, out _);
+
+    // M-3 fix (v0.4.7 audit): probe Lifestream's IPC at startup so the TP
+    // button can disable itself with an actionable tooltip when the user
+    // doesn't have Lifestream installed. Cached after first call so we don't
+    // pay the GetIpcSubscriber lookup every frame.
+    private static bool? _lifestreamCache;
+    internal static bool LifestreamAvailable
+    {
+        get
+        {
+            if (_lifestreamCache.HasValue) return _lifestreamCache.Value;
+            try
+            {
+                var sub = Plugin.PluginInterface.GetIpcSubscriber<bool>("Lifestream.IsBusy");
+                sub.InvokeFunc();   // throws if the IPC isn't registered
+                _lifestreamCache = true;
+            }
+            catch { _lifestreamCache = false; }
+            return _lifestreamCache.Value;
+        }
+    }
+    internal static void InvalidateLifestreamCache() => _lifestreamCache = null;
 
     // Manual aetheryte overrides for zones whose nearest-useful aetheryte
     // lives in a different territory in FFXIV's data (city aetherytes that
@@ -111,10 +143,20 @@ internal static class TeleportRoutine
     public static async void Teleport(SpawnInfo spawn)
     {
         var spawnKey = spawn.ReportedAt.Ticks;
-        InProgress.Add(spawnKey);
+        _inProgress.TryAdd(spawnKey, 0);
 
         try
         {
+            // M-3 fix: bail out loudly when Lifestream isn't installed. The
+            // /li commands would silently no-op otherwise, leaving the user
+            // wondering why nothing happened.
+            if (!LifestreamAvailable)
+            {
+                SafePrint("[FaloopMessenger] Teleport requires the Lifestream plugin. " +
+                          "Install it from the Dalamud plugin browser, then try again.");
+                return;
+            }
+
             if (spawn.TerritoryId == 0)
             {
                 SafePrint("[FaloopMessenger] No territory id for this spawn.");
@@ -156,7 +198,7 @@ internal static class TeleportRoutine
         }
         finally
         {
-            InProgress.Remove(spawnKey);
+            _inProgress.TryRemove(spawnKey, out _);
         }
     }
 

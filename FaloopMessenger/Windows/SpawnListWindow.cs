@@ -34,21 +34,26 @@ public class SpawnListWindow : Window, IDisposable
 
     public override void Draw()
     {
-        // Cached snapshot iterated directly — no per-frame LINQ/ToArray.
+        // M-5 fix (v0.4.7 audit): show every tracked rank, not just S. With
+        // v0.4.5+ per-rank tracking the user can opt into A-ranks, and the
+        // mini/compact windows previously ignored those entries — making the
+        // setting feel broken. Filtering already happens upstream (the socket
+        // client drops anything outside the user's selected ranks), so we
+        // just render whatever survived into _spawns.
         var spawns = _plugin.Client.GetSnapshot();
 
-        var anyS = false;
+        var any = false;
         for (var i = 0; i < spawns.Count; i++)
-            if (!spawns[i].IsDead && spawns[i].Rank == HuntRank.S) { anyS = true; break; }
+            if (!spawns[i].IsDead) { any = true; break; }
 
-        if (!anyS)
+        if (!any)
         {
-            ImGui.TextDisabled("No active S-ranks");
+            ImGui.TextDisabled("No active spawns");
             return;
         }
 
         for (var i = 0; i < spawns.Count; i++)
-            if (!spawns[i].IsDead && spawns[i].Rank == HuntRank.S)
+            if (!spawns[i].IsDead)
                 SpawnCardRenderer.DrawCard(spawns[i], _plugin.Client, compact: _compact);
     }
 }
