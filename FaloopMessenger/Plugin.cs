@@ -349,10 +349,16 @@ public sealed class Plugin : IDalamudPlugin
         {
             try
             {
+                // B-2 (v0.4.7 self-review): the auto-close trigger used to
+                // count only HuntRank.S, but with M-5 the mini/compact windows
+                // now display every rank that survived the upstream filter.
+                // Gating auto-close on S-only meant a session with just A-rank
+                // pings would auto-close the window every refresh despite
+                // visibly-populated cards. Count anything non-dead.
                 var snapshot = Client.GetSnapshot();
                 var live = 0;
                 for (var i = 0; i < snapshot.Count; i++)
-                    if (!snapshot[i].IsDead && snapshot[i].Rank == HuntRank.S) live++;
+                    if (!snapshot[i].IsDead) live++;
 
                 if (Configuration.AutoCloseMiniWhenIdle && _lastLiveSCount > 0 && live == 0)
                     ActiveTracker().IsOpen = false;

@@ -28,25 +28,38 @@ internal static class TeleportRoutine
 
     // M-3 fix (v0.4.7 audit): probe Lifestream's IPC at startup so the TP
     // button can disable itself with an actionable tooltip when the user
-    // doesn't have Lifestream installed. Cached after first call so we don't
-    // pay the GetIpcSubscriber lookup every frame.
-    private static bool? _lifestreamCache;
+    // doesn't have Lifestream installed.
+    //
+    // Caching policy (B-1 from v0.4.7 self-review): only cache POSITIVE
+    // results. A user who installs Lifestream mid-session would otherwise
+    // see TP disabled forever — we'd never re-check. Negative results get
+    // re-probed at most every 30 seconds (cheap — one GetIpcSubscriber +
+    // InvokeFunc call) so the cost is bounded but the answer can change.
+    private static bool _lifestreamKnownGood;
+    private static long _lastLifestreamProbeTicks;
+    private const   long LifestreamProbeMinIntervalMs = 30_000;
+
     internal static bool LifestreamAvailable
     {
         get
         {
-            if (_lifestreamCache.HasValue) return _lifestreamCache.Value;
+            if (_lifestreamKnownGood) return true;
+            var now = Environment.TickCount64;
+            if (now - System.Threading.Interlocked.Read(ref _lastLifestreamProbeTicks)
+                < LifestreamProbeMinIntervalMs)
+                return false;   // recently probed and missing — don't hammer the IPC
+            System.Threading.Interlocked.Exchange(ref _lastLifestreamProbeTicks, now);
+
             try
             {
                 var sub = Plugin.PluginInterface.GetIpcSubscriber<bool>("Lifestream.IsBusy");
                 sub.InvokeFunc();   // throws if the IPC isn't registered
-                _lifestreamCache = true;
+                _lifestreamKnownGood = true;
+                return true;
             }
-            catch { _lifestreamCache = false; }
-            return _lifestreamCache.Value;
+            catch { return false; }
         }
     }
-    internal static void InvalidateLifestreamCache() => _lifestreamCache = null;
 
     // Manual aetheryte overrides for zones whose nearest-useful aetheryte
     // lives in a different territory in FFXIV's data (city aetherytes that
