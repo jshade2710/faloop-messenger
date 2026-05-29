@@ -808,11 +808,32 @@ public class FaloopSocketClient : IDisposable
 
             if (idx >= 0)
             {
+                // Diagnostic: surface coordinate transitions in upserts. If
+                // a pre-release card sat at (0,0) and this event brings real
+                // coords, the user should see them appear — log it so we can
+                // confirm the upsert actually ran when reports say otherwise.
+                var prev = _spawns[idx];
+                if ((prev.X == 0 && prev.Y == 0) && (mapX > 0 || mapY > 0))
+                    Plugin.Log.Information(
+                        $"[Faloop] Upsert {mobName}@{worldName} i{zoneInst} " +
+                        $"gained coords (0,0)→({mapX:F1},{mapY:F1}) " +
+                        $"points={points.Count} wentPublic={wentPublic}");
+
                 _spawns[idx] = spawn;   // atomic slot replace — readers never see a torn state
                 isNew = wentPublic;     // only re-fire OnNewSpawn for the scheduled→public flip
             }
             else
             {
+                // Diagnostic: a brand-new card for a mob/world/instance we
+                // had nothing for. If reports suggest "the pre-release card
+                // didn't update on release", this log line + the previous
+                // pre-release's match key reveal whether the upsert key
+                // diverged (different MobName casing, different instance #,
+                // etc.) and we ended up with two cards instead of one.
+                Plugin.Log.Debug(
+                    $"[Faloop] New card {mobName}@{worldName} i{zoneInst} " +
+                    $"scheduled={isScheduled} stage={stage?.ToString() ?? "null"}");
+
                 _spawns.Insert(0, spawn);
                 while (_spawns.Count > _config.MaxEntries)
                     _spawns.RemoveAt(_spawns.Count - 1);
@@ -975,9 +996,25 @@ public class FaloopSocketClient : IDisposable
 
         // Faloop uses the release event's timestamp as the new ReportedAt
         // (matches fK's `timestamp: new Date(e.timestamp).toISOString()`).
+        // Defensive (v0.4.8.2): also parse `location` / `zonePoiIds` if the
+        // release payload includes them. The bundle's fK decoder ignores
+        // these, but the wire payload may differ — and a pre-release card
+        // that had no POIs would otherwise stay markerless even after the
+        // release event fires.
         DateTime? releaseTime = null;
+        string? releaseLocationStr = null;
+        var releasePoiIds = new List<int>();
         if (mobData.TryGetProperty("data", out var rData))
-            releaseTime = TryParseUtc(GetString(rData, "timestamp"));
+        {
+            releaseTime        = TryParseUtc(GetString(rData, "timestamp"));
+            releaseLocationStr = GetString(rData, "location");
+            if (rData.TryGetProperty("zonePoiIds", out var pois) &&
+                pois.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var pe in pois.EnumerateArray())
+                    if (pe.ValueKind == JsonValueKind.Number) releasePoiIds.Add(pe.GetInt32());
+            }
+        }
 
         SpawnInfo? released = null;
         lock (_lock)
@@ -997,30 +1034,66 @@ public class FaloopSocketClient : IDisposable
             }
 
             var prev = _spawns[idx];
-            // Build the released record by cloning the previous one and
-            // flipping the scheduled state. We preserve every other field
-            // (points, reporter, route hint, …) — the only thing changing
-            // is "is this visible to the public yet."
-            released = new SpawnInfo
+
+            // Compute effective coords: prefer release-event-derived if the
+            // payload included them, fall back to prev otherwise. Resolved
+            // through the same path as HandleSpawnAction so single-point
+            // (`location`) and POI-cloud (`zonePoiIds`) both work.
+            var effX = prev.X; var effY = prev.Y;
+            var effRawX = prev.RawX; var effRawY = prev.RawY;
+            var effPoiId = prev.ZonePoiId;
+            IReadOnlyList<SpawnPoint> effPoints = prev.Points;
+
+            var freshRaw = new List<(int X, int Y)>();
+            if (!string.IsNullOrEmpty(releaseLocationStr) &&
+                TryParseRaw(releaseLocationStr, out var lx, out var ly))
             {
-                World            = prev.World,
-                MobName          = prev.MobName,
-                ZoneName         = prev.ZoneName,
-                X                = prev.X,
-                Y                = prev.Y,
-                Rank             = prev.Rank,
-                HpPercent        = prev.HpPercent,
-                Reporter         = prev.Reporter,
+                freshRaw.Add((lx, ly));
+            }
+            else
+            {
+                foreach (var pid in releasePoiIds)
+                    if (FaloopData.Locations.TryGetValue(pid, out var ploc) &&
+                        TryParseRaw(ploc, out var px, out var py))
+                        freshRaw.Add((px, py));
+            }
+
+            if (freshRaw.Count > 0 && prev.TerritoryId > 0)
+            {
+                var built = new List<SpawnPoint>();
+                foreach (var rp in freshRaw)
+                {
+                    var c = ResolveCoords(prev.TerritoryId, $"{rp.X},{rp.Y}");
+                    if (c.HasValue)
+                        built.Add(new SpawnPoint(c.Value.rawX, c.Value.rawY, c.Value.x, c.Value.y));
+                }
+                if (built.Count > 0)
+                {
+                    effX = built[0].MapX; effY = built[0].MapY;
+                    effRawX = built[0].RawX; effRawY = built[0].RawY;
+                    effPoints = built;
+                    if (releasePoiIds.Count > 0) effPoiId = releasePoiIds[0];
+
+                    if (prev.X == 0 && prev.Y == 0)
+                        Plugin.Log.Information(
+                            $"[Faloop] spawn_release {mobName}@{worldName} i{zoneInst} " +
+                            $"gained coords from release event: ({effX:F1},{effY:F1})");
+                }
+            }
+
+            // Build the released record by cloning the previous one and
+            // flipping the scheduled state. Coords are either freshly
+            // resolved from the release event or preserved from prev.
+            released = prev with
+            {
                 ReportedAt       = releaseTime ?? DateTime.Now,
                 RawEvent         = mobData.GetRawText(),
-                ZoneInstance     = prev.ZoneInstance,
-                TerritoryId      = prev.TerritoryId,
-                MapId            = prev.MapId,
-                RawX             = prev.RawX,
-                RawY             = prev.RawY,
-                ZonePoiId        = prev.ZonePoiId,
-                Points           = prev.Points,
-                IsSS             = prev.IsSS,
+                X                = effX,
+                Y                = effY,
+                RawX             = effRawX,
+                RawY             = effRawY,
+                ZonePoiId        = effPoiId,
+                Points           = effPoints,
                 IsScheduled      = false,           // ← the flip
                 ScheduleDelay    = null,
                 Stage            = null,
