@@ -29,6 +29,8 @@ public sealed class Plugin : IDalamudPlugin
     private const string CommandName        = "/faloop";
     private const string MiniCommandName    = "/faloopmini";
     private const string CompactCommandName = "/faloopcompact";
+    private const string OnCommandName      = "/faloopon";
+    private const string OffCommandName     = "/faloopoff";
 
     public Configuration      Configuration { get; init; }
     public FaloopSocketClient Client        { get; init; }
@@ -116,9 +118,13 @@ public sealed class Plugin : IDalamudPlugin
         // a user mid-hunt who triggers a plugin update doesn't lose their
         // tracker layout. Sync runs on every OnUpdate tick (see
         // HandleSpawnsChanged) to keep the persisted state current.
-        MainWindow.IsOpen    = Configuration.MainWindowOpen;
-        MiniWindow.IsOpen    = Configuration.MiniWindowOpen;
-        CompactWindow.IsOpen = Configuration.CompactWindowOpen;
+        // Paused (/faloopoff) overrides — even if the saved state says a
+        // window was open, we keep it hidden until /faloopon. Stops a
+        // /reload-during-mute from un-muting the user.
+        var allowVisible = !Configuration.Paused;
+        MainWindow.IsOpen    = allowVisible && Configuration.MainWindowOpen;
+        MiniWindow.IsOpen    = allowVisible && Configuration.MiniWindowOpen;
+        CompactWindow.IsOpen = allowVisible && Configuration.CompactWindowOpen;
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
@@ -131,6 +137,14 @@ public sealed class Plugin : IDalamudPlugin
         CommandManager.AddHandler(CompactCommandName, new CommandInfo(OnCompactCommand)
         {
             HelpMessage = "Open the compact S-rank tracker (/faloopcompact)"
+        });
+        CommandManager.AddHandler(OnCommandName, new CommandInfo(OnOnCommand)
+        {
+            HelpMessage = "Resume FaloopMessenger notifications + restore your tracker window"
+        });
+        CommandManager.AddHandler(OffCommandName, new CommandInfo(OnOffCommand)
+        {
+            HelpMessage = "Pause FaloopMessenger: hide windows and mute spawn alerts"
         });
 
         PluginInterface.UiBuilder.Draw         += WindowSystem.Draw;
@@ -170,6 +184,8 @@ public sealed class Plugin : IDalamudPlugin
         CommandManager.RemoveHandler(CommandName);
         CommandManager.RemoveHandler(MiniCommandName);
         CommandManager.RemoveHandler(CompactCommandName);
+        CommandManager.RemoveHandler(OnCommandName);
+        CommandManager.RemoveHandler(OffCommandName);
         Client.OnNewSpawn -= HandleNewSpawn;
         Client.OnUpdate   -= HandleSpawnsChanged;
         Client.Dispose();
@@ -253,8 +269,15 @@ public sealed class Plugin : IDalamudPlugin
     // three bool comparisons + (rarely) a Configuration.Save — cheap at
     // the OnUpdate cadence this runs at. The early-return is what keeps
     // the steady-state cost effectively zero.
+    //
+    // While paused (/faloopoff) we intentionally skip the sync: the
+    // persisted MainWindowOpen / MiniWindowOpen / CompactWindowOpen
+    // continue to reflect the user's pre-pause layout, and /faloopon
+    // restores exactly that (including dual-window setups).
     private void SyncWindowOpenState()
     {
+        if (Configuration.Paused) return;
+
         if (Configuration.MainWindowOpen    == MainWindow.IsOpen    &&
             Configuration.MiniWindowOpen    == MiniWindow.IsOpen    &&
             Configuration.CompactWindowOpen == CompactWindow.IsOpen)
@@ -287,6 +310,54 @@ public sealed class Plugin : IDalamudPlugin
         SyncWindowOpenState();
     }
 
+    // /faloopon — un-pause. Restores the exact window layout the user had
+    // when they paused (preserved via SyncWindowOpenState's paused-state
+    // no-op), and re-enables auto-echo / sound / mini-open on new spawns.
+    private void OnOnCommand(string command, string args)
+    {
+        if (!Configuration.Paused)
+        {
+            ChatGui.Print("[FaloopMessenger] Already on.");
+            return;
+        }
+        Configuration.Paused = false;
+        Configuration.Save();
+
+        // Restore the pre-pause layout. If somehow nothing was saved as
+        // open (fresh-install pause, or every window manually closed
+        // before pausing), fall back to the active tracker so the user
+        // gets *something*.
+        MainWindow.IsOpen    = Configuration.MainWindowOpen;
+        MiniWindow.IsOpen    = Configuration.MiniWindowOpen;
+        CompactWindow.IsOpen = Configuration.CompactWindowOpen;
+        if (!MainWindow.IsOpen && !MiniWindow.IsOpen && !CompactWindow.IsOpen)
+            ActiveTracker().IsOpen = true;
+
+        SyncWindowOpenState();
+        ChatGui.Print("[FaloopMessenger] On — spawn alerts resumed.");
+    }
+
+    // /faloopoff — pause. Hides every tracker window and silences the
+    // new-spawn behaviour. Websocket stays connected and the spawn list
+    // keeps populating in the background; /faloopon brings the windows
+    // back instantly with the current world state, no reconnect lag.
+    private void OnOffCommand(string command, string args)
+    {
+        if (Configuration.Paused)
+        {
+            ChatGui.Print("[FaloopMessenger] Already off.");
+            return;
+        }
+        Configuration.Paused = true;
+        Configuration.Save();
+
+        MainWindow.IsOpen    = false;
+        MiniWindow.IsOpen    = false;
+        CompactWindow.IsOpen = false;
+        SyncWindowOpenState();
+        ChatGui.Print("[FaloopMessenger] Off — spawn alerts muted, windows hidden. Use /faloopon to resume.");
+    }
+
     public void ToggleMainUi()
     {
         MainWindow.Toggle();
@@ -313,6 +384,12 @@ public sealed class Plugin : IDalamudPlugin
         {
             try
             {
+                // Paused (/faloopoff): the spawn still enters the tracker
+                // list — websocket and state-keeping run normally — but we
+                // suppress every user-facing alert. /faloopon restores both
+                // window visibility and the alert behaviour.
+                if (Configuration.Paused) return;
+
                 if (Configuration.AutoEchoOnSpawn)
                     // JustWentPublic = re-fire after a scheduled→public
                     // transition. Prefix the echo so users see why the chat

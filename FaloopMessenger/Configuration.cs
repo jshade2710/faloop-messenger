@@ -120,6 +120,16 @@ public class Configuration : IPluginConfiguration
     public bool AutoOpenMiniOnSpawn   { get; set; } = true;
     public bool AutoCloseMiniWhenIdle { get; set; } = true;
 
+    // Master "muted" flag, toggled by /faloopon and /faloopoff. When true:
+    //   • New-spawn alerts (echo, sound, mini auto-open) are suppressed.
+    //   • All tracker windows are hidden.
+    //   • Websocket stays connected and continues to populate the spawn list,
+    //     so /faloopon brings the current state of the world back instantly
+    //     instead of a multi-second reconnect.
+    // Persisted so a /reload mid-mute doesn't accidentally re-enable
+    // notifications you wanted off.
+    public bool Paused { get; set; } = false;
+
     // Which spawn-list window auto-open should target: 0=Mini, 1=Compact,
     // 2=Main. Updated whenever a tracker window is observed open in Draw,
     // so it survives X-button closes AND plugin reloads — the user's last
