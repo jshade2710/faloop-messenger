@@ -85,6 +85,24 @@ public class FaloopSocketClient : IDisposable
         if (removed) OnUpdate?.Invoke();
     }
 
+    // Drop every tracked spawn. Used by /faloopoff so a paused session
+    // doesn't leave stale, age-incrementing cards on screen. Cheap; the
+    // OnUpdate fire lets the renderer cull its per-spawn animation state.
+    public void ClearAll()
+    {
+        bool hadAny;
+        lock (_lock)
+        {
+            hadAny = _spawns.Count > 0;
+            if (hadAny)
+            {
+                _spawns.Clear();
+                RebuildSnapshotLocked();
+            }
+        }
+        if (hadAny) OnUpdate?.Invoke();
+    }
+
     public void Connect()
     {
         lock (_lifecycle)

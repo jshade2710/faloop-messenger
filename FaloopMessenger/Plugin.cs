@@ -367,11 +367,16 @@ public sealed class Plugin : IDalamudPlugin
         // the same CTS Disconnect() cancels, so this is a clean stop.
         Client.Disconnect();
 
+        // Drop all tracked spawns so /faloopon brings a clean slate. The
+        // OnUpdate fire triggers HandleSpawnsChanged → CullFirstRenderEntries
+        // which clears the renderer's per-spawn animation state too.
+        Client.ClearAll();
+
         MainWindow.IsOpen    = false;
         MiniWindow.IsOpen    = false;
         CompactWindow.IsOpen = false;
         SyncWindowOpenState();
-        ChatGui.Print("[FaloopMessenger] Off — disconnected. Use /faloopon to reconnect.");
+        ChatGui.Print("[FaloopMessenger] Off — disconnected and cleared. Use /faloopon to reconnect.");
     }
 
     public void ToggleMainUi()
