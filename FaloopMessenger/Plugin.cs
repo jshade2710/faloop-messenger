@@ -151,7 +151,14 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenMainUi   += ToggleMainUi;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
 
-        Client.Connect();
+        // Honor a persisted /faloopoff across reloads — don't auto-connect
+        // if the user explicitly turned the plugin off. /faloopon brings
+        // both the windows and the websocket back together.
+        if (!Configuration.Paused)
+            Client.Connect();
+        else
+            Log.Information("[Faloop] Loaded paused (/faloopoff in saved state). /faloopon to resume.");
+
         Log.Information("[Faloop] Messenger loaded.");
 
         // Confirm the embedded data resource loaded with the expected
@@ -310,9 +317,9 @@ public sealed class Plugin : IDalamudPlugin
         SyncWindowOpenState();
     }
 
-    // /faloopon — un-pause. Restores the exact window layout the user had
-    // when they paused (preserved via SyncWindowOpenState's paused-state
-    // no-op), and re-enables auto-echo / sound / mini-open on new spawns.
+    // /faloopon — fully resume. Reconnects the websocket and restores the
+    // exact window layout the user had when they paused (preserved via
+    // SyncWindowOpenState's paused-state no-op).
     private void OnOnCommand(string command, string args)
     {
         if (!Configuration.Paused)
@@ -322,6 +329,10 @@ public sealed class Plugin : IDalamudPlugin
         }
         Configuration.Paused = false;
         Configuration.Save();
+
+        // Reconnect the websocket. Connect() is idempotent — no-op if
+        // we're somehow already in Connecting/Connected state.
+        Client.Connect();
 
         // Restore the pre-pause layout. If somehow nothing was saved as
         // open (fresh-install pause, or every window manually closed
@@ -334,13 +345,13 @@ public sealed class Plugin : IDalamudPlugin
             ActiveTracker().IsOpen = true;
 
         SyncWindowOpenState();
-        ChatGui.Print("[FaloopMessenger] On — spawn alerts resumed.");
+        ChatGui.Print("[FaloopMessenger] On — reconnecting to Faloop.");
     }
 
-    // /faloopoff — pause. Hides every tracker window and silences the
-    // new-spawn behaviour. Websocket stays connected and the spawn list
-    // keeps populating in the background; /faloopon brings the windows
-    // back instantly with the current world state, no reconnect lag.
+    // /faloopoff — fully off. Disconnects the websocket, hides every
+    // tracker window, and silences new-spawn behaviour. The existing
+    // spawn list isn't cleared — when /faloopon reconnects, it'll be
+    // refreshed by Faloop's replay on the new connection.
     private void OnOffCommand(string command, string args)
     {
         if (Configuration.Paused)
@@ -351,11 +362,16 @@ public sealed class Plugin : IDalamudPlugin
         Configuration.Paused = true;
         Configuration.Save();
 
+        // Tear down the websocket so we're not holding an idle connection
+        // to Faloop. Backoff/auto-reconnect inside ConnectLoop is keyed off
+        // the same CTS Disconnect() cancels, so this is a clean stop.
+        Client.Disconnect();
+
         MainWindow.IsOpen    = false;
         MiniWindow.IsOpen    = false;
         CompactWindow.IsOpen = false;
         SyncWindowOpenState();
-        ChatGui.Print("[FaloopMessenger] Off — spawn alerts muted, windows hidden. Use /faloopon to resume.");
+        ChatGui.Print("[FaloopMessenger] Off — disconnected. Use /faloopon to reconnect.");
     }
 
     public void ToggleMainUi()
