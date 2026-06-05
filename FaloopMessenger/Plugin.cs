@@ -29,6 +29,7 @@ public sealed class Plugin : IDalamudPlugin
     private const string CommandName        = "/faloop";
     private const string MiniCommandName    = "/faloopmini";
     private const string CompactCommandName = "/faloopcompact";
+    private const string MicroCommandName   = "/faloopmicro";
     private const string OnCommandName      = "/faloopon";
     private const string OffCommandName     = "/faloopoff";
 
@@ -49,6 +50,7 @@ public sealed class Plugin : IDalamudPlugin
     internal MainWindow      MainWindow    { get; init; }
     internal SpawnListWindow MiniWindow    { get; init; }
     internal SpawnListWindow CompactWindow { get; init; }
+    internal MicroWindow     MicroWindow   { get; init; }
     private  ConfigWindow    ConfigWindow  { get; init; }
 
     public Plugin()
@@ -64,6 +66,7 @@ public sealed class Plugin : IDalamudPlugin
         {
             (int)Tracker.Main    => Tracker.Main,
             (int)Tracker.Compact => Tracker.Compact,
+            (int)Tracker.Micro   => Tracker.Micro,
             _                    => Tracker.Mini,
         };
 
@@ -107,11 +110,13 @@ public sealed class Plugin : IDalamudPlugin
             compact: true,
             defaultSize: new System.Numerics.Vector2(560, 200),
             minSize:     new System.Numerics.Vector2(500, 100));
+        MicroWindow   = new MicroWindow(this);
         ConfigWindow  = new ConfigWindow(this);
 
         WindowSystem.AddWindow(MainWindow);
         WindowSystem.AddWindow(MiniWindow);
         WindowSystem.AddWindow(CompactWindow);
+        WindowSystem.AddWindow(MicroWindow);
         WindowSystem.AddWindow(ConfigWindow);
 
         // Restore each window's open state from the previous session so
@@ -125,6 +130,7 @@ public sealed class Plugin : IDalamudPlugin
         MainWindow.IsOpen    = allowVisible && Configuration.MainWindowOpen;
         MiniWindow.IsOpen    = allowVisible && Configuration.MiniWindowOpen;
         CompactWindow.IsOpen = allowVisible && Configuration.CompactWindowOpen;
+        MicroWindow.IsOpen   = allowVisible && Configuration.MicroWindowOpen;
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
@@ -137,6 +143,10 @@ public sealed class Plugin : IDalamudPlugin
         CommandManager.AddHandler(CompactCommandName, new CommandInfo(OnCompactCommand)
         {
             HelpMessage = "Open the compact S-rank tracker (/faloopcompact)"
+        });
+        CommandManager.AddHandler(MicroCommandName, new CommandInfo(OnMicroCommand)
+        {
+            HelpMessage = "Open the micro S-rank tracker — single-row scrollable list (/faloopmicro)"
         });
         CommandManager.AddHandler(OnCommandName, new CommandInfo(OnOnCommand)
         {
@@ -186,11 +196,13 @@ public sealed class Plugin : IDalamudPlugin
         MainWindow.Dispose();
         MiniWindow.Dispose();
         CompactWindow.Dispose();
+        MicroWindow.Dispose();
         ConfigWindow.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
         CommandManager.RemoveHandler(MiniCommandName);
         CommandManager.RemoveHandler(CompactCommandName);
+        CommandManager.RemoveHandler(MicroCommandName);
         CommandManager.RemoveHandler(OnCommandName);
         CommandManager.RemoveHandler(OffCommandName);
         Client.OnNewSpawn -= HandleNewSpawn;
@@ -233,7 +245,10 @@ public sealed class Plugin : IDalamudPlugin
     // Which tracker window the user most recently opened. The auto open/close
     // on spawn targets THIS one — so if you live in /faloopcompact, the
     // compact window is what pops and hides, not always the mini.
-    private enum Tracker { Main = 2, Mini = 0, Compact = 1 }
+    // Persisted values intentionally stable across additions — Mini=0,
+    // Compact=1, Main=2, Micro=3. Don't renumber existing values when
+    // adding new trackers; saved configs reference the integer directly.
+    private enum Tracker { Main = 2, Mini = 0, Compact = 1, Micro = 3 }
     private Tracker _lastTracker;
 
     // Resolve which tracker auto-open should target. Preference order:
@@ -246,7 +261,10 @@ public sealed class Plugin : IDalamudPlugin
     {
         // (1) Live observation — beats stored preference if the user has
         // a window up right now. Order matches the visual hierarchy
-        // (Compact > Mini > Main) so the smallest/most-recent wins.
+        // (Micro > Compact > Mini > Main) so the smallest/most-recent
+        // wins — a user with both Micro and Compact open just got into
+        // micro mode, so that's what the auto-open should target.
+        if (MicroWindow.IsOpen)   { SetTracker(Tracker.Micro);   return MicroWindow;   }
         if (CompactWindow.IsOpen) { SetTracker(Tracker.Compact); return CompactWindow; }
         if (MiniWindow.IsOpen)    { SetTracker(Tracker.Mini);    return MiniWindow;    }
         if (MainWindow.IsOpen)    { SetTracker(Tracker.Main);    return MainWindow;    }
@@ -256,6 +274,7 @@ public sealed class Plugin : IDalamudPlugin
         {
             Tracker.Main    => MainWindow,
             Tracker.Compact => CompactWindow,
+            Tracker.Micro   => MicroWindow,
             _               => MiniWindow,
         };
     }
@@ -287,12 +306,14 @@ public sealed class Plugin : IDalamudPlugin
 
         if (Configuration.MainWindowOpen    == MainWindow.IsOpen    &&
             Configuration.MiniWindowOpen    == MiniWindow.IsOpen    &&
-            Configuration.CompactWindowOpen == CompactWindow.IsOpen)
+            Configuration.CompactWindowOpen == CompactWindow.IsOpen &&
+            Configuration.MicroWindowOpen   == MicroWindow.IsOpen)
             return;
 
         Configuration.MainWindowOpen    = MainWindow.IsOpen;
         Configuration.MiniWindowOpen    = MiniWindow.IsOpen;
         Configuration.CompactWindowOpen = CompactWindow.IsOpen;
+        Configuration.MicroWindowOpen   = MicroWindow.IsOpen;
         Configuration.Save();
     }
 
@@ -314,6 +335,13 @@ public sealed class Plugin : IDalamudPlugin
     {
         CompactWindow.Toggle();
         if (CompactWindow.IsOpen) SetTracker(Tracker.Compact);
+        SyncWindowOpenState();
+    }
+
+    private void OnMicroCommand(string command, string args)
+    {
+        MicroWindow.Toggle();
+        if (MicroWindow.IsOpen) SetTracker(Tracker.Micro);
         SyncWindowOpenState();
     }
 
@@ -341,7 +369,9 @@ public sealed class Plugin : IDalamudPlugin
         MainWindow.IsOpen    = Configuration.MainWindowOpen;
         MiniWindow.IsOpen    = Configuration.MiniWindowOpen;
         CompactWindow.IsOpen = Configuration.CompactWindowOpen;
-        if (!MainWindow.IsOpen && !MiniWindow.IsOpen && !CompactWindow.IsOpen)
+        MicroWindow.IsOpen   = Configuration.MicroWindowOpen;
+        if (!MainWindow.IsOpen && !MiniWindow.IsOpen &&
+            !CompactWindow.IsOpen && !MicroWindow.IsOpen)
             ActiveTracker().IsOpen = true;
 
         SyncWindowOpenState();
@@ -375,6 +405,7 @@ public sealed class Plugin : IDalamudPlugin
         MainWindow.IsOpen    = false;
         MiniWindow.IsOpen    = false;
         CompactWindow.IsOpen = false;
+        MicroWindow.IsOpen   = false;
         SyncWindowOpenState();
         ChatGui.Print("[FaloopMessenger] Off — disconnected and cleared. Use /faloopon to reconnect.");
     }

@@ -144,6 +144,7 @@ public class Configuration : IPluginConfiguration
     public bool MainWindowOpen    { get; set; } = false;
     public bool MiniWindowOpen    { get; set; } = false;
     public bool CompactWindowOpen { get; set; } = false;
+    public bool MicroWindowOpen   { get; set; } = false;
 
     // Decrypt the stored blob into the in-memory Password, and migrate a
     // pre-0.2 plaintext "Password" key if one is present. Call once right
