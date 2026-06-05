@@ -21,15 +21,22 @@ public class MicroWindow : Window, IDisposable
     private readonly Plugin _plugin;
 
     public MicroWindow(Plugin plugin)
-        : base("Faloop · Micro##faloopmicro", ImGuiWindowFlags.NoCollapse)
+        : base("Faloop · Micro##faloopmicro",
+            ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.AlwaysAutoResize)
     {
+        // Height is computed every frame from the spawn count (1 row when
+        // there's a single spawn, 2 rows when there are 2+, scroll past
+        // that). AlwaysAutoResize lets the window shrink-wrap to whatever
+        // the table reports — no min/max height needed. Width is still
+        // user-resizable via the constraint range below; the FirstUseEver
+        // Size gives an initial value but doesn't pin it.
         SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new Vector2(480f, 180f),
-            MaximumSize = new Vector2(900f, 1200f),
+            MinimumSize = new Vector2(420f, 0f),
+            MaximumSize = new Vector2(900f, float.MaxValue),
         };
         SizeCondition = ImGuiCond.FirstUseEver;
-        Size          = new Vector2(540f, 240f);
+        Size          = new Vector2(540f, 0f);
         _plugin       = plugin;
     }
 
@@ -41,30 +48,35 @@ public class MicroWindow : Window, IDisposable
     {
         var snapshot = _plugin.Client.GetSnapshot();
 
-        // Count live spawns up front so the empty-state message can short-
-        // circuit before we set up the table chrome.
-        var anyLive = false;
+        // Count live spawns once — drives both the empty-state short-
+        // circuit and the table's outer height.
+        var liveCount = 0;
         for (var i = 0; i < snapshot.Count; i++)
-            if (!snapshot[i].IsDead) { anyLive = true; break; }
+            if (!snapshot[i].IsDead) liveCount++;
 
-        if (!anyLive)
+        if (liveCount == 0)
         {
             ImGui.TextDisabled("No active spawns");
             return;
         }
 
-        // Table sits inside the window's existing scroll region (Dalamud's
-        // Window class enables window-level scrolling by default). The
-        // ScrollY flag makes the table itself scrollable when it overflows
-        // the available content region — which gives us the "rows scroll,
-        // window stays small" behaviour the user asked for.
+        // Show one row when there's exactly one spawn; two rows when there
+        // are two or more, with the remainder scrolling past the second
+        // row. Using GetFrameHeightWithSpacing for the row height matches
+        // ImGui's actual per-row layout when the row contains buttons (the
+        // tallest content in each row sets the row height — our buttons).
+        var rowsVisible  = Math.Clamp(liveCount, 1, 2);
+        var headerHeight = ImGui.GetFrameHeight();
+        var rowHeight    = ImGui.GetFrameHeightWithSpacing();
+        var tableHeight  = headerHeight + rowHeight * rowsVisible;
+
         const ImGuiTableFlags flags =
             ImGuiTableFlags.RowBg       |
             ImGuiTableFlags.BordersInnerH |
             ImGuiTableFlags.ScrollY;
 
         using var table = ImRaii.Table("##faloopmicro_table", 3, flags,
-            new Vector2(-1f, -1f));
+            new Vector2(0f, tableHeight));
         if (!table.Success) return;
 
         ImGui.TableSetupColumn("Mob",     ImGuiTableColumnFlags.WidthStretch);
