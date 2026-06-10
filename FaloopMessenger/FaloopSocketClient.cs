@@ -779,7 +779,8 @@ public class FaloopSocketClient : IDisposable
                 string.Equals(s.World,   worldName, StringComparison.OrdinalIgnoreCase) &&
                 s.ZoneInstance == zoneInst);
 
-            bool wentPublic = false;
+            bool wentPublic     = false;
+            bool coordsRevealed = false;
             DateTime? releasedStamp = null;
             if (idx >= 0)
             {
@@ -790,11 +791,18 @@ public class FaloopSocketClient : IDisposable
                 wentPublic = prev.IsScheduled && !isScheduled;
                 releasedStamp = wentPublic ? TimeSync.ServerNow : prev.PublicReleasedAt;
 
+                // Detect coordless→coords transition. The initial echo (when
+                // the spawn first arrived without coords) only printed the
+                // prefix line — no clickable map flag. Re-firing OnNewSpawn
+                // here gives the user a proper flag echo once Faloop tells
+                // us where the mob actually is.
+                coordsRevealed = (prev.X == 0 && prev.Y == 0) && (mapX > 0 || mapY > 0);
+
                 Plugin.Log.Debug(
                     $"[Faloop] Refresh {mobName}@{worldName} i{zoneInst}: " +
                     $"prev.scheduled={prev.IsScheduled} stage={prev.Stage?.ToString() ?? "null"} → " +
                     $"new.scheduled={isScheduled} stage={stage?.ToString() ?? "null"} " +
-                    $"(wentPublic={wentPublic})");
+                    $"(wentPublic={wentPublic}, coordsRevealed={coordsRevealed})");
             }
 
             spawn = new SpawnInfo
@@ -820,25 +828,24 @@ public class FaloopSocketClient : IDisposable
                 ScheduleDelay    = scheduleDelay,
                 Stage            = stage,
                 JustWentPublic   = wentPublic,
+                CoordsRevealed   = coordsRevealed,
                 PublicReleasedAt = releasedStamp,
                 RawEvent         = mobData.GetRawText(),
             };
 
             if (idx >= 0)
             {
-                // Diagnostic: surface coordinate transitions in upserts. If
-                // a pre-release card sat at (0,0) and this event brings real
-                // coords, the user should see them appear — log it so we can
-                // confirm the upsert actually ran when reports say otherwise.
-                var prev = _spawns[idx];
-                if ((prev.X == 0 && prev.Y == 0) && (mapX > 0 || mapY > 0))
+                if (coordsRevealed)
                     Plugin.Log.Information(
                         $"[Faloop] Upsert {mobName}@{worldName} i{zoneInst} " +
                         $"gained coords (0,0)→({mapX:F1},{mapY:F1}) " +
                         $"points={points.Count} wentPublic={wentPublic}");
 
                 _spawns[idx] = spawn;   // atomic slot replace — readers never see a torn state
-                isNew = wentPublic;     // only re-fire OnNewSpawn for the scheduled→public flip
+                // Re-fire OnNewSpawn for either transition: scheduled→public,
+                // OR coordless→coords. Both are user-visible state changes
+                // that warrant a chat echo + sound.
+                isNew = wentPublic || coordsRevealed;
             }
             else
             {
@@ -891,6 +898,7 @@ public class FaloopSocketClient : IDisposable
         // the renderer could be enumerating spawn.Points — a List<T>
         // GetEnumerator violation waiting to happen.
         SpawnInfo? next = null;
+        var coordsRevealed = false;
         lock (_lock)
         {
             var idx = _spawns.FindIndex(s =>
@@ -903,22 +911,30 @@ public class FaloopSocketClient : IDisposable
             var coords = ResolveCoords(prev.TerritoryId, locationStr);
             if (coords == null) return;
 
+            // Coordless→coords transition: the original spawn echoed prefix-
+            // only (no clickable flag). Setting CoordsRevealed makes the
+            // OnNewSpawn re-fire below produce a proper "[Location] " echo
+            // with a real map-link payload.
+            coordsRevealed = prev.X == 0 && prev.Y == 0;
+
             // A precise location collapses the POI cloud to one exact point.
             var pt = new SpawnPoint(coords.Value.rawX, coords.Value.rawY,
                                     coords.Value.x,   coords.Value.y);
             next = prev with
             {
-                X      = coords.Value.x,
-                Y      = coords.Value.y,
-                RawX   = coords.Value.rawX,
-                RawY   = coords.Value.rawY,
-                Points = new[] { pt },
+                X              = coords.Value.x,
+                Y              = coords.Value.y,
+                RawX           = coords.Value.rawX,
+                RawY           = coords.Value.rawY,
+                Points         = new[] { pt },
+                CoordsRevealed = coordsRevealed,
             };
             _spawns[idx] = next;
             RebuildSnapshotLocked();
         }
-        Plugin.Log.Debug($"[Faloop] Updated location for {mobName} on {worldName}: ({next.X:F1}, {next.Y:F1})");
+        Plugin.Log.Debug($"[Faloop] Updated location for {mobName} on {worldName}: ({next.X:F1}, {next.Y:F1}) (coordsRevealed={coordsRevealed})");
 
+        if (coordsRevealed) OnNewSpawn?.Invoke(next);
         OnUpdate?.Invoke();
     }
 
@@ -1102,6 +1118,12 @@ public class FaloopSocketClient : IDisposable
             // Build the released record by cloning the previous one and
             // flipping the scheduled state. Coords are either freshly
             // resolved from the release event or preserved from prev.
+            // CoordsRevealed fires in the case where prev was at (0,0)
+            // and the release event itself carried coords — the echo
+            // re-fire below already runs unconditionally for releases
+            // (JustWentPublic), but flagging CoordsRevealed lets the
+            // chat prefix accurately credit the location update too.
+            var releaseCoordsRevealed = prev.X == 0 && prev.Y == 0 && (effX > 0 || effY > 0);
             released = prev with
             {
                 ReportedAt       = releaseTime ?? DateTime.Now,
@@ -1116,6 +1138,7 @@ public class FaloopSocketClient : IDisposable
                 ScheduleDelay    = null,
                 Stage            = null,
                 JustWentPublic   = true,
+                CoordsRevealed   = releaseCoordsRevealed,
                 PublicReleasedAt = TimeSync.ServerNow,
                 IsDead           = false,
                 KilledAt         = null,

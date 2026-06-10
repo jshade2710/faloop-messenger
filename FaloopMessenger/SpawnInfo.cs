@@ -78,6 +78,14 @@ public record class SpawnInfo
     // Not persisted; only meaningful for the single OnNewSpawn invocation.
     public bool JustWentPublic { get; init; }
 
+    // Transient flag set by socket-client upsert / location-refinement /
+    // release paths when a spawn we were already tracking at (0,0)
+    // receives real coordinates for the first time. Triggers a re-fire
+    // of OnNewSpawn so the user gets a chat echo with a clickable map
+    // flag — the initial echo (prior to coords) only printed the prefix
+    // line, so without this they'd never get a flag link for that spawn.
+    public bool CoordsRevealed { get; init; }
+
     // When a scheduled/early-access spawn transitions to public, the upsert
     // path stamps this with ServerNow. Renderer shows a green JUST RELEASED
     // badge for ~10 minutes after the stamp so the transition is visible

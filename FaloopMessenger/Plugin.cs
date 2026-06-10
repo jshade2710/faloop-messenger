@@ -443,11 +443,22 @@ public sealed class Plugin : IDalamudPlugin
                 if (Configuration.Paused) return;
 
                 if (Configuration.AutoEchoOnSpawn)
-                    // JustWentPublic = re-fire after a scheduled→public
-                    // transition. Prefix the echo so users see why the chat
-                    // line dinged twice (the first ding was the pre-release
-                    // heads-up; this one is the real "go pull it" alert).
-                    PrintSpawnEcho(spawn, spawn.JustWentPublic ? "[Public release] " : null);
+                {
+                    // Pick the most informative prefix when this OnNewSpawn
+                    // call is a re-fire rather than a first sighting:
+                    //   JustWentPublic   = pre-release/early-access flipped
+                    //                      to publicly live (highest signal
+                    //                      — "go pull it" moment).
+                    //   CoordsRevealed   = previously-coordless spawn just
+                    //                      got real coords; the initial
+                    //                      echo lacked a clickable flag.
+                    // Public release takes precedence when both fire on the
+                    // same event (a release that also reveals coords).
+                    string? prefix = spawn.JustWentPublic ? "[Public release] "
+                                   : spawn.CoordsRevealed ? "[Location] "
+                                   : null;
+                    PrintSpawnEcho(spawn, prefix);
+                }
 
                 if (Configuration.AutoSoundOnSpawn)
                     PlayChatSound(Configuration.SoundEffect);
