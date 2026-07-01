@@ -95,4 +95,23 @@ public record class SpawnInfo
 
     public bool      IsDead   { get; init; }
     public DateTime? KilledAt { get; init; }
+
+    // True when this spawn has a real, plantable map location. Faloop reports
+    // a spawn before it always knows where the mob is — a scheduled/pre-
+    // release event, or a report Faloop hasn't located yet, arrives with no
+    // usable coordinates. Raw (0,0) is Faloop's "unknown" sentinel; it
+    // resolves to map ~(1.0,1.0), the near-origin spot a mis-planted flag
+    // lands on. We gate on the RAW coords (authoritative reported position)
+    // plus territory/map resolution so both the (0,0) and (0.1,0.1) cases
+    // read as "not ready". Consumed by the flag buttons to red-flag an
+    // un-plantable spawn, and mirrors SetFlag's own plant guard.
+    public bool HasLocation
+    {
+        get
+        {
+            if (TerritoryId == 0 || MapId == 0) return false;
+            if (Points.Count > 0) return Points[0].RawX > 0 || Points[0].RawY > 0;
+            return RawX > 0 || RawY > 0;
+        }
+    }
 }

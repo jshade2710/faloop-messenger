@@ -172,10 +172,31 @@ public class MicroWindow : Window, IDisposable
                 ImGui.TextUnformatted("Teleport requires the Lifestream plugin.");
 
         ImGui.SameLine(0f, 4f);
-        using (ImRaii.Disabled(!canAct))
+        // Flag button turns red + disabled when the spawn has no confirmed
+        // location yet (Faloop hasn't told us where the mob is — common for
+        // scheduled / pre-release reports). Flips back to normal the frame
+        // real coords arrive, since HasLocation is recomputed each draw.
+        var hasLoc = spawn.HasLocation;
+        if (!hasLoc)
         {
-            if (ImGui.Button("Flag##flag", new Vector2(52f, 0)))
-                TeleportRoutine.SetFlag(spawn);
+            using (ImRaii.PushColor(ImGuiCol.Button,        Theme.Danger))
+            using (ImRaii.PushColor(ImGuiCol.ButtonHovered, Theme.Danger))
+            using (ImRaii.PushColor(ImGuiCol.ButtonActive,  Theme.Danger))
+            using (ImRaii.Disabled())
+            {
+                ImGui.Button("Flag##flag", new Vector2(52f, 0));
+            }
+            if (ImGui.IsItemHovered())
+                using (ImRaii.Tooltip())
+                    ImGui.TextUnformatted("Location not confirmed by Faloop yet.");
+        }
+        else
+        {
+            using (ImRaii.Disabled(!canAct))
+            {
+                if (ImGui.Button("Flag##flag", new Vector2(52f, 0)))
+                    TeleportRoutine.SetFlag(spawn);
+            }
         }
 
         ImGui.SameLine(0f, 4f);

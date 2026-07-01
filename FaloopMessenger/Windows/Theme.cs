@@ -61,4 +61,10 @@ internal static class Theme
     public static readonly Vector4 BtnGoldHov  = new(0.92f, 0.78f, 0.20f, 1f);
     public static readonly Vector4 BtnGoldActv = new(1.00f, 0.85f, 0.15f, 1f);
     public static readonly Vector4 BtnGoldText = new(0.06f, 0.06f, 0.08f, 1f);
+
+    // Danger red — used to flag a not-yet-plantable Flag button (spawn has
+    // no confirmed coordinates from Faloop yet). Slightly desaturated from
+    // the connection-status red so a disabled button reads as "waiting"
+    // rather than "error".
+    public static readonly Vector4 Danger = new(0.72f, 0.24f, 0.22f, 1f);
 }

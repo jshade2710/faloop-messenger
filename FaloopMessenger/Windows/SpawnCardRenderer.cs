@@ -814,8 +814,17 @@ internal static class SpawnCardRenderer
         x += CmpButtonW + CmpBtnGap;
 
         // Compact has no map thumbnail to click, so Flag lives here.
+        // Red + non-actionable when the spawn has no confirmed coords yet
+        // (scheduled/pre-release, or Faloop hasn't located it). Flips back
+        // to normal the frame real coords arrive.
+        var flagReady = spawn.HasLocation;
         DrawButton(dl, "Flag", $"##flag_{spawnKey}", new Vector2(x, y0), sz,
-            primary: false, disabled: !canAct, () => TeleportRoutine.SetFlag(spawn));
+            primary: false, disabled: !canAct || !flagReady,
+            () => TeleportRoutine.SetFlag(spawn),
+            danger: !flagReady);
+        if (!flagReady && ImGui.IsItemHovered())
+            using (ImRaii.Tooltip())
+                ImGui.TextUnformatted("Location not confirmed by Faloop yet.");
         x += CmpButtonW + CmpBtnGap;
         DrawButton(dl, "PF", $"##pf_{spawnKey}", new Vector2(x, y0), sz,
             primary: false, disabled: false, TeleportRoutine.OpenPartyFinder);
@@ -826,7 +835,8 @@ internal static class SpawnCardRenderer
     // click/hover; the rect + label are drawn on the window draw list.
     private static void DrawButton(ImDrawListPtr dl, string label, string id,
                                    Vector2 pos, Vector2 size, bool primary,
-                                   bool disabled, System.Action onClick)
+                                   bool disabled, System.Action onClick,
+                                   bool danger = false)
     {
         ImGui.SetCursorScreenPos(pos);
         ImGui.InvisibleButton(id, size);
@@ -834,11 +844,16 @@ internal static class SpawnCardRenderer
         var active  = !disabled && ImGui.IsItemActive();
         if (!disabled && ImGui.IsItemClicked()) onClick();
 
-        var bg = primary
-            ? (active ? Theme.BtnGoldActv : hovered ? Theme.BtnGoldHov : Theme.BtnGold)
-            : (active ? Theme.BtnNeutralActv : hovered ? Theme.BtnNeutralHov : Theme.BtnNeutral);
+        // Danger overrides the palette entirely — a red "waiting for coords"
+        // Flag button. Rendered dimmed (like disabled) since it's not
+        // actionable, but the red still reads through.
+        var bg = danger
+            ? Theme.Danger
+            : primary
+                ? (active ? Theme.BtnGoldActv : hovered ? Theme.BtnGoldHov : Theme.BtnGold)
+                : (active ? Theme.BtnNeutralActv : hovered ? Theme.BtnNeutralHov : Theme.BtnNeutral);
         var txt = primary ? Theme.BtnGoldText : Theme.BtnNeutralText;
-        if (disabled) { bg.W *= 0.4f; txt.W *= 0.55f; }
+        if (disabled && !danger) { bg.W *= 0.4f; txt.W *= 0.55f; }
 
         dl.AddRectFilled(pos, pos + size, ImGui.GetColorU32(bg), S(4f));
         var ts = Measure(_fMedium, PxMedium, label);
@@ -887,10 +902,16 @@ internal static class SpawnCardRenderer
             uvMax = uvMin + new Vector2(ThumbZoom);
         }
 
+        // The thumbnail IS the standard card's flag affordance. When the
+        // spawn has no confirmed location yet, clicking must not plant a
+        // garbage origin flag — so we gate the click and swap the hover
+        // border cyan→red with a "waiting" tooltip, mirroring the red Flag
+        // button in the compact / micro windows.
+        var flagReady    = spawn.HasLocation;
         var thumbMin     = pos;
         var thumbMax     = pos + new Vector2(size, size);
         var thumbHovered = ImGui.IsMouseHoveringRect(thumbMin, thumbMax) && ImGui.IsWindowHovered();
-        if (thumbHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left) && spawn.TerritoryId > 0)
+        if (thumbHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left) && flagReady)
             TeleportRoutine.SetFlag(spawn);
 
         dl.AddImageRounded(wrap.Handle, pos, pos + new Vector2(size, size),
@@ -898,10 +919,12 @@ internal static class SpawnCardRenderer
 
         if (thumbHovered)
         {
-            dl.AddRect(pos, pos + new Vector2(size, size), 0xFF40D9FF, S(4f), 0, 1.5f);
-            if (spawn.TerritoryId > 0)
-                using (ImRaii.Tooltip())
-                    ImGui.TextUnformatted("Click to place a map flag");
+            var borderCol = flagReady ? 0xFF40D9FFu : ImGui.GetColorU32(Theme.Danger);
+            dl.AddRect(pos, pos + new Vector2(size, size), borderCol, S(4f), 0, 1.5f);
+            using (ImRaii.Tooltip())
+                ImGui.TextUnformatted(flagReady
+                    ? "Click to place a map flag"
+                    : "Location not confirmed by Faloop yet.");
         }
 
         if (hasCoords)
