@@ -96,7 +96,37 @@ internal static class TeleportRoutine
     {
         try
         {
-            var link = new MapLinkPayload(spawn.TerritoryId, spawn.MapId, spawn.X, spawn.Y);
+            // Read coords from Points[0] — the SAME authoritative source the
+            // chat echo (Plugin.PrintSpawnEcho) and the card renderer
+            // (SpawnCardRenderer.DrawMapThumb) use. spawn.X / spawn.Y are a
+            // denormalised mirror of Points[0] that can drift out of sync
+            // across the coordless→location→release upsert sequence (a spawn
+            // that arrived without coords, then got them, could end up with
+            // Points populated but X/Y stale at 0 — planting the flag at the
+            // map origin, ~0.1,0.1). Points is the single source of truth;
+            // fall back to X/Y only when Points is somehow empty.
+            float mapX, mapY;
+            if (spawn.Points.Count > 0)
+            {
+                mapX = spawn.Points[0].MapX;
+                mapY = spawn.Points[0].MapY;
+            }
+            else
+            {
+                mapX = spawn.X;
+                mapY = spawn.Y;
+            }
+
+            if (spawn.TerritoryId == 0 || spawn.MapId == 0 || (mapX <= 0 && mapY <= 0))
+            {
+                Plugin.Log.Warning(
+                    $"[Faloop] SetFlag skipped for {spawn.MobName}@{spawn.World}: " +
+                    $"no resolvable location (territory={spawn.TerritoryId} map={spawn.MapId} " +
+                    $"pts={spawn.Points.Count} x={mapX:F1} y={mapY:F1}).");
+                return;
+            }
+
+            var link = new MapLinkPayload(spawn.TerritoryId, spawn.MapId, mapX, mapY);
             Plugin.GameGui.OpenMapWithMapLink(link);
         }
         catch (Exception ex)
@@ -176,6 +206,12 @@ internal static class TeleportRoutine
                 return;
             }
 
+            // Prefer Points[0]'s raw coords (authoritative, same as the flag
+            // and echo) over the denormalised spawn.RawX/RawY mirror, which
+            // can drift stale across the coordless→location→release sequence.
+            var rawX = spawn.Points.Count > 0 ? spawn.Points[0].RawX : spawn.RawX;
+            var rawY = spawn.Points.Count > 0 ? spawn.Points[0].RawY : spawn.RawY;
+
             string? aetheryteName = null;
             if (spawn.ZonePoiId > 0 &&
                 FaloopRoutes.RouteByPoiId.TryGetValue(spawn.ZonePoiId, out var faloopRoute))
@@ -185,7 +221,7 @@ internal static class TeleportRoutine
             else
             {
                 aetheryteName = await Plugin.Framework.RunOnFrameworkThread(() =>
-                    FindAetheryteForTerritory(spawn.TerritoryId, spawn.RawX, spawn.RawY));
+                    FindAetheryteForTerritory(spawn.TerritoryId, rawX, rawY));
             }
 
             if (string.IsNullOrEmpty(aetheryteName))
