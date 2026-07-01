@@ -452,10 +452,16 @@ public sealed class Plugin : IDalamudPlugin
                     //   CoordsRevealed   = previously-coordless spawn just
                     //                      got real coords; the initial
                     //                      echo lacked a clickable flag.
-                    // Public release takes precedence when both fire on the
-                    // same event (a release that also reveals coords).
-                    string? prefix = spawn.JustWentPublic ? "[Public release] "
-                                   : spawn.CoordsRevealed ? "[Location] "
+                    //   CoordsCorrected  = a spawn that already had coords
+                    //                      was moved to a meaningfully
+                    //                      different spot (debounced >2 map-
+                    //                      units in the socket client).
+                    // Precedence: public release > reveal > correction, so a
+                    // single event that does more than one of these credits
+                    // the most important signal.
+                    string? prefix = spawn.JustWentPublic  ? "[Public release] "
+                                   : spawn.CoordsRevealed  ? "[Location] "
+                                   : spawn.CoordsCorrected ? "[Location updated] "
                                    : null;
                     PrintSpawnEcho(spawn, prefix);
                 }

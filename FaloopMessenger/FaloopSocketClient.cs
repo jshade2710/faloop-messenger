@@ -42,6 +42,12 @@ public class FaloopSocketClient : IDisposable
     private const string ApiRefresh       = "https://faloop.app/api/auth/user/refresh";
     private const string ApiLogin         = "https://faloop.app/api/auth/user/login";
 
+    // A coordinate correction (real→real move) must exceed this many map-
+    // units to re-echo. Debounces Faloop's incremental location refinements
+    // — reporters nudging a marker a fraction of a tile shouldn't spam chat;
+    // a genuine "wrong spot, it's actually over here" correction will.
+    private const float CoordCorrectionThreshold = 2.0f;
+
     private readonly Configuration   _config;
     private readonly List<SpawnInfo> _spawns = new();
     private readonly object          _lock   = new();
@@ -779,8 +785,9 @@ public class FaloopSocketClient : IDisposable
                 string.Equals(s.World,   worldName, StringComparison.OrdinalIgnoreCase) &&
                 s.ZoneInstance == zoneInst);
 
-            bool wentPublic     = false;
-            bool coordsRevealed = false;
+            bool wentPublic      = false;
+            bool coordsRevealed  = false;
+            bool coordsCorrected = false;
             DateTime? releasedStamp = null;
             if (idx >= 0)
             {
@@ -796,13 +803,19 @@ public class FaloopSocketClient : IDisposable
                 // prefix line — no clickable map flag. Re-firing OnNewSpawn
                 // here gives the user a proper flag echo once Faloop tells
                 // us where the mob actually is.
-                coordsRevealed = (prev.X == 0 && prev.Y == 0) && (mapX > 0 || mapY > 0);
+                var prevHadCoords = prev.X > 0 || prev.Y > 0;
+                var newHasCoords  = mapX > 0 || mapY > 0;
+                coordsRevealed  = !prevHadCoords && newHasCoords;
+                // Real→real correction, debounced by distance so a reporter
+                // nudging the marker a fraction of a tile stays quiet.
+                coordsCorrected = prevHadCoords && newHasCoords &&
+                                  MapDist(prev.X, prev.Y, mapX, mapY) > CoordCorrectionThreshold;
 
                 Plugin.Log.Debug(
                     $"[Faloop] Refresh {mobName}@{worldName} i{zoneInst}: " +
                     $"prev.scheduled={prev.IsScheduled} stage={prev.Stage?.ToString() ?? "null"} → " +
                     $"new.scheduled={isScheduled} stage={stage?.ToString() ?? "null"} " +
-                    $"(wentPublic={wentPublic}, coordsRevealed={coordsRevealed})");
+                    $"(wentPublic={wentPublic}, coordsRevealed={coordsRevealed}, coordsCorrected={coordsCorrected})");
             }
 
             spawn = new SpawnInfo
@@ -829,6 +842,7 @@ public class FaloopSocketClient : IDisposable
                 Stage            = stage,
                 JustWentPublic   = wentPublic,
                 CoordsRevealed   = coordsRevealed,
+                CoordsCorrected  = coordsCorrected,
                 PublicReleasedAt = releasedStamp,
                 RawEvent         = mobData.GetRawText(),
             };
@@ -842,10 +856,10 @@ public class FaloopSocketClient : IDisposable
                         $"points={points.Count} wentPublic={wentPublic}");
 
                 _spawns[idx] = spawn;   // atomic slot replace — readers never see a torn state
-                // Re-fire OnNewSpawn for either transition: scheduled→public,
-                // OR coordless→coords. Both are user-visible state changes
-                // that warrant a chat echo + sound.
-                isNew = wentPublic || coordsRevealed;
+                // Re-fire OnNewSpawn for any user-visible location change:
+                // scheduled→public, coordless→coords, or a debounced real→
+                // real correction. All warrant a fresh chat echo + sound.
+                isNew = wentPublic || coordsRevealed || coordsCorrected;
             }
             else
             {
@@ -898,7 +912,8 @@ public class FaloopSocketClient : IDisposable
         // the renderer could be enumerating spawn.Points — a List<T>
         // GetEnumerator violation waiting to happen.
         SpawnInfo? next = null;
-        var coordsRevealed = false;
+        var coordsRevealed  = false;
+        var coordsCorrected = false;
         lock (_lock)
         {
             var idx = _spawns.FindIndex(s =>
@@ -911,30 +926,34 @@ public class FaloopSocketClient : IDisposable
             var coords = ResolveCoords(prev.TerritoryId, locationStr);
             if (coords == null) return;
 
-            // Coordless→coords transition: the original spawn echoed prefix-
-            // only (no clickable flag). Setting CoordsRevealed makes the
-            // OnNewSpawn re-fire below produce a proper "[Location] " echo
-            // with a real map-link payload.
-            coordsRevealed = prev.X == 0 && prev.Y == 0;
+            // Coordless→coords reveal, or a debounced real→real correction.
+            // Both fire the OnNewSpawn re-echo below; the prefix (chosen in
+            // Plugin.HandleNewSpawn) distinguishes "[Location]" (reveal) from
+            // "[Location updated]" (correction).
+            var prevHadCoords = prev.X > 0 || prev.Y > 0;
+            coordsRevealed  = !prevHadCoords;
+            coordsCorrected = prevHadCoords &&
+                              MapDist(prev.X, prev.Y, coords.Value.x, coords.Value.y) > CoordCorrectionThreshold;
 
             // A precise location collapses the POI cloud to one exact point.
             var pt = new SpawnPoint(coords.Value.rawX, coords.Value.rawY,
                                     coords.Value.x,   coords.Value.y);
             next = prev with
             {
-                X              = coords.Value.x,
-                Y              = coords.Value.y,
-                RawX           = coords.Value.rawX,
-                RawY           = coords.Value.rawY,
-                Points         = new[] { pt },
-                CoordsRevealed = coordsRevealed,
+                X               = coords.Value.x,
+                Y               = coords.Value.y,
+                RawX            = coords.Value.rawX,
+                RawY            = coords.Value.rawY,
+                Points          = new[] { pt },
+                CoordsRevealed  = coordsRevealed,
+                CoordsCorrected = coordsCorrected,
             };
             _spawns[idx] = next;
             RebuildSnapshotLocked();
         }
-        Plugin.Log.Debug($"[Faloop] Updated location for {mobName} on {worldName}: ({next.X:F1}, {next.Y:F1}) (coordsRevealed={coordsRevealed})");
+        Plugin.Log.Debug($"[Faloop] Updated location for {mobName} on {worldName}: ({next.X:F1}, {next.Y:F1}) (coordsRevealed={coordsRevealed}, coordsCorrected={coordsCorrected})");
 
-        if (coordsRevealed) OnNewSpawn?.Invoke(next);
+        if (coordsRevealed || coordsCorrected) OnNewSpawn?.Invoke(next);
         OnUpdate?.Invoke();
     }
 
@@ -947,6 +966,16 @@ public class FaloopSocketClient : IDisposable
         if (string.IsNullOrEmpty(s)) return false;
         var p = s.Split(',');
         return p.Length == 2 && int.TryParse(p[0], out x) && int.TryParse(p[1], out y);
+    }
+
+    // Euclidean distance between two in-game map coordinates, in map-units.
+    // Used to debounce coordinate corrections (only a move beyond the
+    // CoordCorrectionThreshold re-echoes).
+    private static float MapDist(float x1, float y1, float x2, float y2)
+    {
+        var dx = x2 - x1;
+        var dy = y2 - y1;
+        return MathF.Sqrt(dx * dx + dy * dy);
     }
 
     private static (float x, float y, int rawX, int rawY)? ResolveCoords(uint territoryId, string locationStr)

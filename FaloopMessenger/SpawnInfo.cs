@@ -86,6 +86,14 @@ public record class SpawnInfo
     // line, so without this they'd never get a flag link for that spawn.
     public bool CoordsRevealed { get; init; }
 
+    // Transient flag set when a spawn that ALREADY had coordinates gets
+    // corrected to a meaningfully different position (Faloop reporters
+    // refining / fixing a location). Debounced by a distance threshold in
+    // the socket client so sub-tile refinements don't spam chat — only a
+    // move of more than a couple map-units re-echoes. Distinct from
+    // CoordsRevealed (0→real) so the echo prefix can say "updated".
+    public bool CoordsCorrected { get; init; }
+
     // When a scheduled/early-access spawn transitions to public, the upsert
     // path stamps this with ServerNow. Renderer shows a green JUST RELEASED
     // badge for ~10 minutes after the stamp so the transition is visible
