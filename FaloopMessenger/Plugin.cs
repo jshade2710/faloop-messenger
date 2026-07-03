@@ -161,20 +161,36 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenMainUi   += ToggleMainUi;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
 
+        // M-5 (v0.4.14 review): touch the embedded data tables BEFORE the
+        // first websocket event can. FaloopData's static initialisers throw
+        // TypeInitializationException if the embedded JSON is corrupt, and
+        // if the FIRST touch happened inside a websocket event handler the
+        // exception would be swallowed by ParseEvent's catch — poisoning
+        // every subsequent FaloopData access while the plugin sat there
+        // looking connected-but-dead. Failing here instead produces one
+        // clear load-time error and skips connecting entirely.
+        var dataOk = false;
+        try
+        {
+            Log.Information($"[Faloop] Data loaded: {FaloopData.IntegritySummary()}");
+            dataOk = true;
+        }
+        catch (System.Exception ex)
+        {
+            Log.Error(ex, "[Faloop] Embedded data failed to load — not connecting. " +
+                          "Reinstall the plugin; if this persists, report it.");
+            ChatGui.PrintError("[FaloopMessenger] Data tables failed to load — plugin inactive. Reinstall to fix.");
+        }
+
         // Honor a persisted /faloopoff across reloads — don't auto-connect
         // if the user explicitly turned the plugin off. /faloopon brings
         // both the windows and the websocket back together.
-        if (!Configuration.Paused)
+        if (dataOk && !Configuration.Paused)
             Client.Connect();
-        else
+        else if (Configuration.Paused)
             Log.Information("[Faloop] Loaded paused (/faloopoff in saved state). /faloopon to resume.");
 
         Log.Information("[Faloop] Messenger loaded.");
-
-        // Confirm the embedded data resource loaded with the expected
-        // magnitudes (cheap guard against a broken JSON edit).
-        try { Log.Information($"[Faloop] Data loaded: {FaloopData.IntegritySummary()}"); }
-        catch (System.Exception ex) { Log.Error(ex, "[Faloop] Embedded data failed to load"); }
 
         // One-shot: audit which Faloop zones can resolve an aetheryte. Findings
         // go to the Dalamud log so we know which territories need overrides.

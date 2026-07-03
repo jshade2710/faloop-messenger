@@ -42,6 +42,11 @@ public class FaloopSocketClient : IDisposable
     private const string ApiRefresh       = "https://faloop.app/api/auth/user/refresh";
     private const string ApiLogin         = "https://faloop.app/api/auth/user/login";
 
+    // Browser-mimicking UA sent on both the websocket upgrade and the REST
+    // calls (Faloop's endpoints are SPA-facing and reject obvious bots).
+    private const string UserAgent =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0";
+
     // A coordinate correction (real→real move) must exceed this many map-
     // units to re-echo. Debounces Faloop's incremental location refinements
     // — reporters nudging a marker a fraction of a tile shouldn't spam chat;
@@ -52,6 +57,38 @@ public class FaloopSocketClient : IDisposable
     private readonly List<SpawnInfo> _spawns = new();
     private readonly object          _lock   = new();
     private readonly object          _lifecycle = new();
+
+    // M-4 (v0.4.14 review): ONE HttpClient for the client's lifetime.
+    // Previously every auth attempt and every 30-min time-sync tick built a
+    // fresh HttpClient — each instance owns a connection pool, so per-call
+    // construction is the classic socket-exhaustion anti-pattern. Shared
+    // defaults live here; per-request Referer / Authorization are attached
+    // to individual HttpRequestMessages. Disposed alongside the loop task.
+    private readonly HttpClient _http = CreateHttpClient();
+
+    private static HttpClient CreateHttpClient()
+    {
+        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        http.DefaultRequestHeaders.Add("Accept",          "application/json, text/plain, */*");
+        http.DefaultRequestHeaders.Add("Accept-Language", "en");
+        http.DefaultRequestHeaders.Add("Origin",          FaloopOrigin);
+        http.DefaultRequestHeaders.Add("User-Agent",      UserAgent);
+        return http;
+    }
+
+    // JSON POST with the per-request headers Faloop's SPA-facing endpoints
+    // expect. Caller disposes (or lets the response own it via SendAsync).
+    private static HttpRequestMessage NewApiPost(string url, string referer, string jsonBody, string? authorization = null)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent(jsonBody, Encoding.UTF8, "application/json"),
+        };
+        req.Headers.Add("Referer", referer);
+        if (authorization != null)
+            req.Headers.TryAddWithoutValidation("Authorization", authorization);
+        return req;
+    }
     private          CancellationTokenSource _cts = new();
     private          Task?  _loopTask;
     private          string? _sessionId;
@@ -210,7 +247,7 @@ public class FaloopSocketClient : IDisposable
 
                 using var ws = new ClientWebSocket();
                 ws.Options.SetRequestHeader("Origin",     FaloopOrigin);
-                ws.Options.SetRequestHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0");
+                ws.Options.SetRequestHeader("User-Agent", UserAgent);
 
                 await ws.ConnectAsync(wsUri, ct).ConfigureAwait(false);
 
@@ -255,17 +292,17 @@ public class FaloopSocketClient : IDisposable
     // Periodically refresh the local↔server clock offset by reading the Date
     // header on a lightweight HEAD request to faloop.app. Runs in the
     // background for as long as we're connected.
-    private static async Task TimeSyncLoop(CancellationToken ct)
+    private async Task TimeSyncLoop(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
             try
             {
                 await Task.Delay(TimeSpan.FromMinutes(30), ct);
-                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-                http.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0");
+                // M-4: shared client — a HEAD every 30 min through the same
+                // connection pool instead of a fresh HttpClient per tick.
                 using var req  = new HttpRequestMessage(HttpMethod.Head, FaloopBase);
-                using var resp = await http.SendAsync(req, ct);
+                using var resp = await _http.SendAsync(req, ct);
                 if (resp.Headers.Date.HasValue)
                     TimeSync.RecordServerTime(resp.Headers.Date.Value);
             }
@@ -289,8 +326,6 @@ public class FaloopSocketClient : IDisposable
 
         try
         {
-            using var http = MakeBrowserHttpClient(FaloopBase);
-
             // Step 1: refresh — pass the previously cached session ID so the
             // server can resume it if still valid (saves a roundtrip and
             // reduces auth churn). The server returns a fresh ID if the cached
@@ -299,8 +334,8 @@ public class FaloopSocketClient : IDisposable
                 ? "null"
                 : $"\"{_config.StoredSessionId}\"";
             var refreshBody = $"{{\"sessionId\":{cachedSession}}}";
-            using var refreshContent = new StringContent(refreshBody, Encoding.UTF8, "application/json");
-            using var refreshResp = await http.PostAsync(ApiRefresh, refreshContent, ct);
+            using var refreshReq  = NewApiPost(ApiRefresh, FaloopBase, refreshBody);
+            using var refreshResp = await _http.SendAsync(refreshReq, ct);
             if (!refreshResp.IsSuccessStatusCode)
             {
                 Plugin.Log.Warning($"[Faloop] Refresh HTTP {(int)refreshResp.StatusCode}");
@@ -328,12 +363,10 @@ public class FaloopSocketClient : IDisposable
                 return anonSession;
             }
 
-            // Step 2: login — uses anon sessionId + JWT to authenticate
-            using var loginHttp = MakeBrowserHttpClient(FaloopLoginRef);
-            // The token starts with "JWT " — pass through unvalidated (default
-            // AuthenticationHeaderValue parser rejects schemes containing dots).
-            loginHttp.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", token);
-
+            // Step 2: login — uses anon sessionId + JWT to authenticate.
+            // The token starts with "JWT " — passed through unvalidated
+            // (the default AuthenticationHeaderValue parser rejects schemes
+            // containing dots), attached per-request via NewApiPost.
             var loginPayload = JsonSerializer.Serialize(new
             {
                 username   = cfgUser,
@@ -341,8 +374,8 @@ public class FaloopSocketClient : IDisposable
                 rememberMe = false,
                 sessionId  = anonSession,
             });
-            using var loginContent = new StringContent(loginPayload, Encoding.UTF8, "application/json");
-            using var loginResp = await loginHttp.PostAsync(ApiLogin, loginContent, ct);
+            using var loginReq  = NewApiPost(ApiLogin, FaloopLoginRef, loginPayload, token);
+            using var loginResp = await _http.SendAsync(loginReq, ct);
             if (!loginResp.IsSuccessStatusCode)
             {
                 Plugin.Log.Warning($"[Faloop] Login HTTP {(int)loginResp.StatusCode} — falling back to anonymous");
@@ -381,17 +414,6 @@ public class FaloopSocketClient : IDisposable
         if (_config.StoredSessionId == sessionId) return;   // unchanged
         _config.StoredSessionId = sessionId;
         try { _config.Save(); } catch { /* config save failure is non-fatal */ }
-    }
-
-    private static HttpClient MakeBrowserHttpClient(string referer)
-    {
-        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-        http.DefaultRequestHeaders.Add("Accept",          "application/json, text/plain, */*");
-        http.DefaultRequestHeaders.Add("Accept-Language", "en");
-        http.DefaultRequestHeaders.Add("Origin",          FaloopOrigin);
-        http.DefaultRequestHeaders.Add("Referer",         referer);
-        http.DefaultRequestHeaders.Add("User-Agent",      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0");
-        return http;
     }
 
     // ── Session receive loop ──────────────────────────────────────────
@@ -639,111 +661,23 @@ public class FaloopSocketClient : IDisposable
         // rank scope lookup so we don't waste a dictionary access.
         if (rank == HuntRank.B) return;
 
-        var rankAllowed   = rank == HuntRank.S ? _config.ShowSRanks : _config.ShowARanks;
-        if (!rankAllowed) return;
-
-        var scopeDc       = rank == HuntRank.S ? _config.SDataCenter        : _config.ADataCenter;
-        var scopeWfOn     = rank == HuntRank.S ? _config.SWorldFilterEnabled : _config.AWorldFilterEnabled;
-        var scopeWfList   = rank == HuntRank.S ? _config.SWorldWhitelist     : _config.AWorldWhitelist;
-
-        // Resolve world name via Lumina
+        // ── Stage 1: filter ───────────────────────────────────────────
         FaloopData.Worlds.TryGetValue(worldSlug, out var worldId);
-        var worldName = (worldId > 0 ? LookupWorldName(worldId) : null) ?? worldSlug;
-
-        // Data center filter — uses the per-rank scope captured above
-        // (S-rank events filter against SDataCenter, A-rank against
-        // ADataCenter). Empty or "All" disables the filter.
-        if (!string.IsNullOrEmpty(scopeDc) &&
-            !scopeDc.Equals("All", StringComparison.OrdinalIgnoreCase) &&
-            FaloopData.DataCenters.TryGetValue(scopeDc, out var dcWorlds) &&
-            !dcWorlds.Contains(worldId))
-        {
-            return;
-        }
-
-        // Per-world filter (a subset of the DC the user explicitly ticked).
-        // Only applies when enabled; the empty/disabled case keeps the full DC.
-        if (scopeWfOn && !scopeWfList.Contains((int)worldId))
-            return;
+        if (!PassesRankScope(rank, worldId)) return;
 
         // The nested "data" object holds spawn-specific fields (Spawn record)
         if (!mobData.TryGetProperty("data", out var spawnData)) return;
 
         var zoneSlug = GetString(spawnData, "zoneId2") ?? string.Empty;
         FaloopData.TerritoryTypes.TryGetValue(zoneSlug, out var territoryId);
+        if (!PassesExpansionFilter(territoryId)) return;
 
-        // Per-expansion filter (e.g. "only Dawntrail"). Only applies when
-        // enabled. A spawn whose territory we can't classify (unknown zone) is
-        // never dropped here — better to show a slightly-mislabelled card than
-        // to silently swallow a real S-rank.
-        if (_config.ExpansionFilterEnabled)
-        {
-            var exp = FaloopData.ExpansionForTerritory(territoryId);
-            if (exp.HasValue && !_config.ExpansionWhitelist.Contains((int)exp.Value))
-                return;
-        }
-
-        // Resolve coordinates. A normal spawn has a precise "location" or a
-        // single zonePoiId; SS "minion" reports carry several zonePoiIds at
-        // once — collect every one so each gets a map marker AND its own
-        // clickable chat flag (the old code kept only zonePoiIds[0]).
-        var rawPts = new List<(int X, int Y)>();
-        string? locationStr = GetString(spawnData, "location");
-        int zonePoiId = 0;
-
-        if (ArrayLen(spawnData, "zonePoiIds", out var pois) > 0)
-        {
-            if (pois[0].ValueKind == JsonValueKind.Number) zonePoiId = pois[0].GetInt32();
-            if (locationStr == null)
-                foreach (var pe in pois.EnumerateArray())
-                {
-                    if (pe.ValueKind != JsonValueKind.Number) continue;
-                    var poiId = pe.GetInt32();
-                    if (FaloopData.Locations.TryGetValue(poiId, out var ploc) &&
-                        TryParseRaw(ploc, out var px, out var py))
-                        rawPts.Add((px, py));
-                    else
-                        // Loud warning: a missing POI is a data-gap bug, not a
-                        // runtime condition. The card will render markerless
-                        // and we want to know which IDs need to be added.
-                        Plugin.Log.Warning(
-                            $"[Faloop] Unknown zonePoiId {poiId} in zone " +
-                            $"'{zoneSlug}' (mob {mobSlug}). Add to faloop-data.json.");
-                }
-        }
-
-        // A precise location supersedes the POI cloud (single refined point).
-        if (locationStr != null && TryParseRaw(locationStr, out var lx, out var ly))
-        {
-            rawPts.Clear();
-            rawPts.Add((lx, ly));
-        }
-
-        // Convert each raw point → in-game map coords (the clickable chat
-        // flags need map coords; the thumbnail needs the raw 2048 ones).
-        var points = new List<SpawnPoint>();
-        uint mapId = 0;
-
-        if (territoryId > 0)
-        {
-            var sheet = Plugin.DataManager.GetExcelSheet<TerritoryType>();
-            if (sheet != null && sheet.TryGetRow(territoryId, out var tt))
-            {
-                mapId = tt.Map.ValueNullable?.RowId ?? 0;
-                foreach (var rp in rawPts)
-                {
-                    var c = ResolveCoords(territoryId, $"{rp.X},{rp.Y}");
-                    if (c.HasValue)
-                        points.Add(new SpawnPoint(c.Value.rawX, c.Value.rawY,
-                                                  c.Value.x, c.Value.y));
-                }
-            }
-        }
+        // ── Stage 2: resolve ──────────────────────────────────────────
+        var worldName = (worldId > 0 ? LookupWorldName(worldId) : null) ?? worldSlug;
+        var (points, mapId, zonePoiId) = ResolveSpawnPoints(spawnData, zoneSlug, territoryId, mobSlug);
 
         float mapX = points.Count > 0 ? points[0].MapX : 0f;
         float mapY = points.Count > 0 ? points[0].MapY : 0f;
-        int   rawX = points.Count > 0 ? points[0].RawX : 0;
-        int   rawY = points.Count > 0 ? points[0].RawY : 0;
 
         var reporter = string.Empty;
         if (ArrayLen(spawnData, "reporters", out var reporters) > 0)
@@ -822,8 +756,6 @@ public class FaloopSocketClient : IDisposable
                 World            = worldName,
                 MobName          = mobName,
                 ZoneName         = zoneName,
-                X                = mapX,
-                Y                = mapY,
                 Rank             = rank,
                 HpPercent        = 100,
                 Reporter         = reporter,
@@ -831,8 +763,6 @@ public class FaloopSocketClient : IDisposable
                 ZoneInstance     = zoneInst,
                 TerritoryId      = territoryId,
                 MapId            = mapId,
-                RawX             = rawX,
-                RawY             = rawY,
                 ZonePoiId        = zonePoiId,
                 Points           = points,
                 IsSS             = mobInfo.Rank == MobRank.SS,
@@ -882,6 +812,111 @@ public class FaloopSocketClient : IDisposable
 
         if (isNew) OnNewSpawn?.Invoke(spawn);   // don't re-alert on a refresh
         OnUpdate?.Invoke();
+    }
+
+    // ── HandleSpawnAction pipeline stages (M-2, v0.4.14 review) ───────
+    // The spawn handler used to be a ~200-line monolith doing filtering,
+    // parsing, coordinate math, transition detection, and upsert in one
+    // method — every recent bug required surgery inside it. Each stage now
+    // has one job and one reason to change.
+
+    // Per-rank scope filter: rank toggle → data-center → world whitelist.
+    // S-rank events filter against the S scope, A-rank against the A scope.
+    // Empty/"All" DC disables the DC filter; a disabled world filter keeps
+    // the whole DC.
+    private bool PassesRankScope(HuntRank rank, uint worldId)
+    {
+        var rankAllowed = rank == HuntRank.S ? _config.ShowSRanks : _config.ShowARanks;
+        if (!rankAllowed) return false;
+
+        var scopeDc     = rank == HuntRank.S ? _config.SDataCenter         : _config.ADataCenter;
+        var scopeWfOn   = rank == HuntRank.S ? _config.SWorldFilterEnabled : _config.AWorldFilterEnabled;
+        var scopeWfList = rank == HuntRank.S ? _config.SWorldWhitelist     : _config.AWorldWhitelist;
+
+        if (!string.IsNullOrEmpty(scopeDc) &&
+            !scopeDc.Equals("All", StringComparison.OrdinalIgnoreCase) &&
+            FaloopData.DataCenters.TryGetValue(scopeDc, out var dcWorlds) &&
+            !dcWorlds.Contains(worldId))
+            return false;
+
+        if (scopeWfOn && !scopeWfList.Contains((int)worldId))
+            return false;
+
+        return true;
+    }
+
+    // Per-expansion filter (e.g. "only Dawntrail"). Only applies when
+    // enabled. A spawn whose territory we can't classify (unknown zone) is
+    // never dropped here — better to show a slightly-mislabelled card than
+    // to silently swallow a real S-rank.
+    private bool PassesExpansionFilter(uint territoryId)
+    {
+        if (!_config.ExpansionFilterEnabled) return true;
+        var exp = FaloopData.ExpansionForTerritory(territoryId);
+        return !exp.HasValue || _config.ExpansionWhitelist.Contains((int)exp.Value);
+    }
+
+    // Resolve the event's reported position(s) into map-ready SpawnPoints.
+    // A normal spawn has a precise "location" or a single zonePoiId; SS
+    // "minion" reports carry several zonePoiIds at once — collect every one
+    // so each gets a map marker AND its own clickable chat flag. A precise
+    // location supersedes the POI cloud.
+    private static (List<SpawnPoint> Points, uint MapId, int ZonePoiId) ResolveSpawnPoints(
+        JsonElement spawnData, string zoneSlug, uint territoryId, string mobSlug)
+    {
+        var rawPts = new List<(int X, int Y)>();
+        string? locationStr = GetString(spawnData, "location");
+        int zonePoiId = 0;
+
+        if (ArrayLen(spawnData, "zonePoiIds", out var pois) > 0)
+        {
+            if (pois[0].ValueKind == JsonValueKind.Number) zonePoiId = pois[0].GetInt32();
+            if (locationStr == null)
+                foreach (var pe in pois.EnumerateArray())
+                {
+                    if (pe.ValueKind != JsonValueKind.Number) continue;
+                    var poiId = pe.GetInt32();
+                    if (FaloopData.Locations.TryGetValue(poiId, out var ploc) &&
+                        TryParseRaw(ploc, out var px, out var py))
+                        rawPts.Add((px, py));
+                    else
+                        // Loud warning: a missing POI is a data-gap bug, not a
+                        // runtime condition. The card will render markerless
+                        // and we want to know which IDs need to be added.
+                        Plugin.Log.Warning(
+                            $"[Faloop] Unknown zonePoiId {poiId} in zone " +
+                            $"'{zoneSlug}' (mob {mobSlug}). Add to faloop-data.json.");
+                }
+        }
+
+        if (locationStr != null && TryParseRaw(locationStr, out var lx, out var ly))
+        {
+            rawPts.Clear();
+            rawPts.Add((lx, ly));
+        }
+
+        // Convert each raw point → in-game map coords (the clickable chat
+        // flags need map coords; the thumbnail needs the raw 2048 ones).
+        var points = new List<SpawnPoint>();
+        uint mapId = 0;
+
+        if (territoryId > 0)
+        {
+            var sheet = Plugin.DataManager.GetExcelSheet<TerritoryType>();
+            if (sheet != null && sheet.TryGetRow(territoryId, out var tt))
+            {
+                mapId = tt.Map.ValueNullable?.RowId ?? 0;
+                foreach (var rp in rawPts)
+                {
+                    var c = ResolveCoords(territoryId, $"{rp.X},{rp.Y}");
+                    if (c.HasValue)
+                        points.Add(new SpawnPoint(c.Value.rawX, c.Value.rawY,
+                                                  c.Value.x, c.Value.y));
+                }
+            }
+        }
+
+        return (points, mapId, zonePoiId);
     }
 
     private void HandleSpawnLocationAction(string mobSlug, string worldSlug, int zoneInst, JsonElement mobData)
@@ -936,12 +971,10 @@ public class FaloopSocketClient : IDisposable
             // A precise location collapses the POI cloud to one exact point.
             var pt = new SpawnPoint(coords.Value.rawX, coords.Value.rawY,
                                     coords.Value.x,   coords.Value.y);
+            // Points is the single source of truth (M-3) — X/Y/RawX/RawY are
+            // computed from Points[0], so replacing Points IS the coord update.
             next = prev with
             {
-                X               = coords.Value.x,
-                Y               = coords.Value.y,
-                RawX            = coords.Value.rawX,
-                RawY            = coords.Value.rawY,
                 Points          = new[] { pt },
                 CoordsRevealed  = coordsRevealed,
                 CoordsCorrected = coordsCorrected,
@@ -1092,12 +1125,12 @@ public class FaloopSocketClient : IDisposable
 
             var prev = _spawns[idx];
 
-            // Compute effective coords: prefer release-event-derived if the
+            // Compute effective points: prefer release-event-derived if the
             // payload included them, fall back to prev otherwise. Resolved
             // through the same path as HandleSpawnAction so single-point
-            // (`location`) and POI-cloud (`zonePoiIds`) both work.
-            var effX = prev.X; var effY = prev.Y;
-            var effRawX = prev.RawX; var effRawY = prev.RawY;
+            // (`location`) and POI-cloud (`zonePoiIds`) both work. Points is
+            // the single source of truth (M-3) — X/Y/RawX/RawY are computed
+            // from Points[0], so swapping the list IS the coord update.
             var effPoiId = prev.ZonePoiId;
             IReadOnlyList<SpawnPoint> effPoints = prev.Points;
 
@@ -1126,15 +1159,13 @@ public class FaloopSocketClient : IDisposable
                 }
                 if (built.Count > 0)
                 {
-                    effX = built[0].MapX; effY = built[0].MapY;
-                    effRawX = built[0].RawX; effRawY = built[0].RawY;
                     effPoints = built;
                     if (releasePoiIds.Count > 0) effPoiId = releasePoiIds[0];
 
                     if (prev.X == 0 && prev.Y == 0)
                         Plugin.Log.Information(
                             $"[Faloop] spawn_release {mobName}@{worldName} i{zoneInst} " +
-                            $"gained coords from release event: ({effX:F1},{effY:F1})");
+                            $"gained coords from release event: ({built[0].MapX:F1},{built[0].MapY:F1})");
                 }
             }
 
@@ -1146,15 +1177,13 @@ public class FaloopSocketClient : IDisposable
             // re-fire below already runs unconditionally for releases
             // (JustWentPublic), but flagging CoordsRevealed lets the
             // chat prefix accurately credit the location update too.
-            var releaseCoordsRevealed = prev.X == 0 && prev.Y == 0 && (effX > 0 || effY > 0);
+            var releaseCoordsRevealed = prev.X == 0 && prev.Y == 0 &&
+                                        effPoints.Count > 0 &&
+                                        (effPoints[0].MapX > 0 || effPoints[0].MapY > 0);
             released = prev with
             {
                 ReportedAt       = releaseTime ?? DateTime.Now,
                 RawEvent         = mobData.GetRawText(),
-                X                = effX,
-                Y                = effY,
-                RawX             = effRawX,
-                RawY             = effRawY,
                 ZonePoiId        = effPoiId,
                 Points           = effPoints,
                 IsScheduled      = false,           // ← the flip
@@ -1272,14 +1301,13 @@ public class FaloopSocketClient : IDisposable
             // `with`-clone so identity fields (MobSlug/WorldSlug, H-1) and any
             // future additions carry over automatically instead of each full
             // initializer needing to remember them.
+            // Points drives X/Y/RawX/RawY (computed, M-3); `points` here is
+            // either the narrowed phase set or prev.Points, so the coords
+            // follow automatically.
             next = prev with
             {
-                X                = points.Count > 0 ? points[0].MapX : prev.X,
-                Y                = points.Count > 0 ? points[0].MapY : prev.Y,
                 ReportedAt       = progressTime ?? prev.ReportedAt,
                 RawEvent         = mobData.GetRawText(),
-                RawX             = points.Count > 0 ? points[0].RawX : prev.RawX,
-                RawY             = points.Count > 0 ? points[0].RawY : prev.RawY,
                 ZonePoiId        = narrowedPois.Count > 0 ? narrowedPois[0] : prev.ZonePoiId,
                 Points           = points,
                 Stage            = phaseNum,
@@ -1413,12 +1441,14 @@ public class FaloopSocketClient : IDisposable
         // RunOnFrameworkThread. Cancel and let the loop unwind asynchronously;
         // dispose the CTS from a fire-and-forget continuation on the thread
         // pool so it can never be touched after Dispose returns.
-        var cts = _cts;
+        var cts  = _cts;
         var task = _loopTask ?? Task.CompletedTask;
+        var http = _http;
         try { cts.Cancel(); } catch { /* already disposed */ }
         _ = task.ContinueWith(_ =>
         {
-            try { cts.Dispose(); } catch { /* already disposed */ }
+            try { cts.Dispose(); }  catch { /* already disposed */ }
+            try { http.Dispose(); } catch { /* already disposed */ }
         }, TaskScheduler.Default);
     }
 }

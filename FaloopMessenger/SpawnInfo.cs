@@ -32,8 +32,6 @@ public record class SpawnInfo
     public required string World    { get; init; }
     public required string MobName  { get; init; }
     public required string ZoneName { get; init; }
-    public required float  X        { get; init; }
-    public required float  Y        { get; init; }
     public HuntRank  Rank         { get; init; } = HuntRank.S;
     public int       HpPercent    { get; init; } = 100;
     public string    Reporter     { get; init; } = string.Empty;
@@ -45,10 +43,18 @@ public record class SpawnInfo
     public uint TerritoryId { get; init; }
     public uint MapId       { get; init; }
 
-    // Raw 2048-scale pixel coords from Faloop — used to place a marker on the
-    // map texture (which is also 2048×2048). 0,0 means "no precise location yet".
-    public int RawX { get; init; }
-    public int RawY { get; init; }
+    // M-3 (v0.4.14 review): X/Y/RawX/RawY used to be stored fields — a
+    // denormalised mirror of Points[0] that every handler had to remember to
+    // copy, and that drifted out of sync at least once in the wild (the
+    // origin-flag bug: SetFlag read a stale X/Y while the echo read Points).
+    // Now they're computed straight from Points, so there is exactly ONE
+    // source of truth and a "mirror out of sync" bug is unrepresentable.
+    // X/Y are in-game map coords; RawX/RawY are Faloop's 2048-scale pixel
+    // coords (the map texture is 2048×2048). 0 means "no location yet".
+    public float X    => Points.Count > 0 ? Points[0].MapX : 0f;
+    public float Y    => Points.Count > 0 ? Points[0].MapY : 0f;
+    public int   RawX => Points.Count > 0 ? Points[0].RawX : 0;
+    public int   RawY => Points.Count > 0 ? Points[0].RawY : 0;
 
     // Faloop's zone POI ID for this spawn (used to look up the precomputed
     // travel route). 0 = unknown.
@@ -125,13 +131,7 @@ public record class SpawnInfo
     // plus territory/map resolution so both the (0,0) and (0.1,0.1) cases
     // read as "not ready". Consumed by the flag buttons to red-flag an
     // un-plantable spawn, and mirrors SetFlag's own plant guard.
-    public bool HasLocation
-    {
-        get
-        {
-            if (TerritoryId == 0 || MapId == 0) return false;
-            if (Points.Count > 0) return Points[0].RawX > 0 || Points[0].RawY > 0;
-            return RawX > 0 || RawY > 0;
-        }
-    }
+    public bool HasLocation =>
+        TerritoryId != 0 && MapId != 0 &&
+        Points.Count > 0 && (Points[0].RawX > 0 || Points[0].RawY > 0);
 }
