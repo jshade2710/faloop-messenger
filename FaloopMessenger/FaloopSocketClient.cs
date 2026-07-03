@@ -691,7 +691,7 @@ public class FaloopSocketClient : IDisposable
         string? locationStr = GetString(spawnData, "location");
         int zonePoiId = 0;
 
-        if (spawnData.TryGetProperty("zonePoiIds", out var pois) && pois.GetArrayLength() > 0)
+        if (ArrayLen(spawnData, "zonePoiIds", out var pois) > 0)
         {
             if (pois[0].ValueKind == JsonValueKind.Number) zonePoiId = pois[0].GetInt32();
             if (locationStr == null)
@@ -746,7 +746,7 @@ public class FaloopSocketClient : IDisposable
         int   rawY = points.Count > 0 ? points[0].RawY : 0;
 
         var reporter = string.Empty;
-        if (spawnData.TryGetProperty("reporters", out var reporters) && reporters.GetArrayLength() > 0)
+        if (ArrayLen(spawnData, "reporters", out var reporters) > 0)
             reporter = GetString(reporters[0], "name") ?? string.Empty;
 
         var zoneName = (territoryId > 0 ? LookupZoneName(territoryId) : null) ?? zoneSlug;
@@ -779,11 +779,8 @@ public class FaloopSocketClient : IDisposable
         bool isNew;
         lock (_lock)
         {
-            var idx = _spawns.FindIndex(s =>
-                !s.IsDead &&
-                string.Equals(s.MobName, mobName, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(s.World,   worldName, StringComparison.OrdinalIgnoreCase) &&
-                s.ZoneInstance == zoneInst);
+            // H-1: upsert identity keyed on wire slugs, not resolved names.
+            var idx = FindSpawnIndexLocked(mobSlug, worldSlug, zoneInst);
 
             bool wentPublic      = false;
             bool coordsRevealed  = false;
@@ -820,6 +817,8 @@ public class FaloopSocketClient : IDisposable
 
             spawn = new SpawnInfo
             {
+                MobSlug          = mobSlug,
+                WorldSlug        = worldSlug,
                 World            = worldName,
                 MobName          = mobName,
                 ZoneName         = zoneName,
@@ -916,10 +915,9 @@ public class FaloopSocketClient : IDisposable
         var coordsCorrected = false;
         lock (_lock)
         {
-            var idx = _spawns.FindIndex(s =>
-                string.Equals(s.MobName, mobName, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(s.World,   worldName, StringComparison.OrdinalIgnoreCase) &&
-                s.ZoneInstance == zoneInst);
+            // H-1: slug-keyed lookup. aliveOnly:false preserves the old
+            // behaviour of patching dead entries' locations too.
+            var idx = FindSpawnIndexLocked(mobSlug, worldSlug, zoneInst, aliveOnly: false);
             if (idx < 0) return;
 
             var prev   = _spawns[idx];
@@ -1018,10 +1016,9 @@ public class FaloopSocketClient : IDisposable
         // C-1 fix: replace, don't mutate. See HandleSpawnLocationAction.
         lock (_lock)
         {
-            var idx = _spawns.FindIndex(s =>
-                string.Equals(s.MobName, mobName, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(s.World,   worldName, StringComparison.OrdinalIgnoreCase) &&
-                s.ZoneInstance == zoneInst);
+            // H-1: slug-keyed lookup (matches dead entries too — a replayed
+            // death event for an already-dead card is a harmless no-op patch).
+            var idx = FindSpawnIndexLocked(mobSlug, worldSlug, zoneInst, aliveOnly: false);
             if (idx < 0) return;
 
             _spawns[idx] = _spawns[idx] with { IsDead = true, KilledAt = killedAt };
@@ -1082,11 +1079,8 @@ public class FaloopSocketClient : IDisposable
         SpawnInfo? released = null;
         lock (_lock)
         {
-            var idx = _spawns.FindIndex(s =>
-                !s.IsDead &&
-                string.Equals(s.MobName, mobName, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(s.World,   worldName, StringComparison.OrdinalIgnoreCase) &&
-                s.ZoneInstance == zoneInst);
+            // H-1: slug-keyed lookup.
+            var idx = FindSpawnIndexLocked(mobSlug, worldSlug, zoneInst);
 
             if (idx < 0)
             {
@@ -1168,6 +1162,7 @@ public class FaloopSocketClient : IDisposable
                 Stage            = null,
                 JustWentPublic   = true,
                 CoordsRevealed   = releaseCoordsRevealed,
+                CoordsCorrected  = false,   // transient — don't carry a stale flag through the clone
                 PublicReleasedAt = TimeSync.ServerNow,
                 IsDead           = false,
                 KilledAt         = null,
@@ -1214,11 +1209,8 @@ public class FaloopSocketClient : IDisposable
         SpawnInfo? next = null;
         lock (_lock)
         {
-            var idx = _spawns.FindIndex(s =>
-                !s.IsDead &&
-                string.Equals(s.MobName, mobName, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(s.World,   worldName, StringComparison.OrdinalIgnoreCase) &&
-                s.ZoneInstance == zoneInst);
+            // H-1: slug-keyed lookup.
+            var idx = FindSpawnIndexLocked(mobSlug, worldSlug, zoneInst);
 
             if (idx < 0)
             {
@@ -1277,31 +1269,23 @@ public class FaloopSocketClient : IDisposable
                 ? prev.Points
                 : built;
 
-            next = new SpawnInfo
+            // `with`-clone so identity fields (MobSlug/WorldSlug, H-1) and any
+            // future additions carry over automatically instead of each full
+            // initializer needing to remember them.
+            next = prev with
             {
-                World            = prev.World,
-                MobName          = prev.MobName,
-                ZoneName         = prev.ZoneName,
                 X                = points.Count > 0 ? points[0].MapX : prev.X,
                 Y                = points.Count > 0 ? points[0].MapY : prev.Y,
-                Rank             = prev.Rank,
-                HpPercent        = prev.HpPercent,
-                Reporter         = prev.Reporter,
                 ReportedAt       = progressTime ?? prev.ReportedAt,
                 RawEvent         = mobData.GetRawText(),
-                ZoneInstance     = prev.ZoneInstance,
-                TerritoryId      = prev.TerritoryId,
-                MapId            = prev.MapId,
                 RawX             = points.Count > 0 ? points[0].RawX : prev.RawX,
                 RawY             = points.Count > 0 ? points[0].RawY : prev.RawY,
                 ZonePoiId        = narrowedPois.Count > 0 ? narrowedPois[0] : prev.ZonePoiId,
                 Points           = points,
-                IsSS             = prev.IsSS,
-                IsScheduled      = prev.IsScheduled,
-                ScheduleDelay    = prev.ScheduleDelay,
                 Stage            = phaseNum,
                 JustWentPublic   = false,
-                PublicReleasedAt = prev.PublicReleasedAt,
+                CoordsRevealed   = false,
+                CoordsCorrected  = false,
                 IsDead           = false,
                 KilledAt         = null,
             };
@@ -1324,9 +1308,10 @@ public class FaloopSocketClient : IDisposable
 
         lock (_lock)
         {
+            // H-1: slug-keyed removal.
             _spawns.RemoveAll(s =>
-                string.Equals(s.MobName, mobName, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(s.World, worldName, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(s.MobSlug,   mobSlug,   StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(s.WorldSlug, worldSlug, StringComparison.OrdinalIgnoreCase) &&
                 s.ZoneInstance == zoneInst);
             RebuildSnapshotLocked();
         }
@@ -1375,6 +1360,31 @@ public class FaloopSocketClient : IDisposable
 
     private static bool GetBool(JsonElement e, string key) =>
         e.TryGetProperty(key, out var p) && p.ValueKind == JsonValueKind.True;
+
+    // H-2 (v0.4.14 review): element count of `key` iff it exists AND is an
+    // array; 0 otherwise. TryGetProperty alone guards *presence* — a JSON
+    // null (`"reporters": null`) would still reach GetArrayLength() and
+    // throw InvalidOperationException, which ParseEvent's catch would turn
+    // into a silently dropped spawn event. A dropped S-rank notification is
+    // the worst failure mode this plugin has, so tolerate every shape.
+    private static int ArrayLen(JsonElement e, string key, out JsonElement arr)
+    {
+        if (e.TryGetProperty(key, out arr) && arr.ValueKind == JsonValueKind.Array)
+            return arr.GetArrayLength();
+        arr = default;
+        return 0;
+    }
+
+    // H-1 (v0.4.14 review): the ONE spawn-identity predicate, keyed on wire
+    // slugs (never on Lumina-resolved display names — see SpawnInfo.MobSlug).
+    // Must be called inside `lock (_lock)`. aliveOnly=false matches dead
+    // entries too (death/location handlers patch those).
+    private int FindSpawnIndexLocked(string mobSlug, string worldSlug, int zoneInst, bool aliveOnly = true)
+        => _spawns.FindIndex(s =>
+            (!aliveOnly || !s.IsDead) &&
+            string.Equals(s.MobSlug,   mobSlug,   StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(s.WorldSlug, worldSlug, StringComparison.OrdinalIgnoreCase) &&
+            s.ZoneInstance == zoneInst);
 
     // ── Send helper ───────────────────────────────────────────────────
 

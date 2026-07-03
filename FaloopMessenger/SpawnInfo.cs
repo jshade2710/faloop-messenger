@@ -17,6 +17,18 @@ public readonly record struct SpawnPoint(int RawX, int RawY, float MapX, float M
 // enumeration with a Clear()/Add() in flight. See C-1 in the v0.4.7 audit.
 public record class SpawnInfo
 {
+    // H-1 (v0.4.14 review): identity comes from the WIRE, not from Lumina
+    // resolution. MobName/World below are display strings resolved through
+    // Lumina — and that resolution can fall back to the raw slug when a
+    // sheet is briefly unready or an ID is unknown. Keying the upsert on
+    // display strings meant two events for the same mark could produce two
+    // cards ("forgiven_rebellion" vs "Forgiven Rebellion"), one of them
+    // coordless — the suspected root of the origin-flag bug. These two
+    // slugs are copied verbatim from the Faloop payload and never require
+    // a lookup, so the identity key is stable across every event.
+    public required string MobSlug   { get; init; }
+    public required string WorldSlug { get; init; }
+
     public required string World    { get; init; }
     public required string MobName  { get; init; }
     public required string ZoneName { get; init; }

@@ -38,7 +38,18 @@ public class Configuration : IPluginConfiguration
 
     // Cached session ID from the most recent successful refresh — used so we
     // don't need to do a fresh anonymous handshake on every plugin start.
+    //
+    // H-3 (v0.4.14 review): this is a LIVE auth token — it's what the socket
+    // sends in the Socket.IO CONNECT packet to authenticate, and for EA-tier
+    // users it gates privileged pre-release data. It gets the same DPAPI
+    // treatment as the password: [JsonIgnore] in memory, encrypted blob on
+    // disk. Users paste their config JSON into Discord when troubleshooting;
+    // a plaintext session id in that file is a session-hijack handout.
+    [JsonIgnore]
     public string StoredSessionId { get; set; } = string.Empty;
+
+    // DPAPI (CurrentUser) encrypted session-id blob — this is what hits disk.
+    public string ProtectedSessionId { get; set; } = string.Empty;
 
     // Connection — /comms/socket.io is the correct Socket.IO path on faloop.app
     public string SocketUrl { get; set; } = "wss://faloop.app/comms/socket.io/?EIO=4&transport=websocket";
@@ -164,6 +175,20 @@ public class Configuration : IPluginConfiguration
         // as plaintext (JsonExtensionData round-trips otherwise).
         var hadLegacy = _legacy.Remove("Password");
 
+        // H-3: decrypt the stored session id, and migrate a pre-v0.4.14
+        // plaintext "StoredSessionId" key if one is present. Same pattern as
+        // the password: since the property is now [JsonIgnore], the old JSON
+        // key lands in _legacy — recover it, then remove it so it can never
+        // round-trip back to disk in the clear.
+        StoredSessionId = Dpapi.Unprotect(ProtectedSessionId);
+        if (string.IsNullOrEmpty(StoredSessionId) &&
+            _legacy.TryGetValue("StoredSessionId", out var legacySession) &&
+            legacySession.Type == JTokenType.String)
+        {
+            StoredSessionId = legacySession.Value<string>() ?? string.Empty;
+        }
+        var migratedSession = _legacy.Remove("StoredSessionId");
+
         // Pre-v0.4.5 had a single OnlySRanks bool. Migrate to the per-rank
         // pair if a saved value is still present. true → S only; false →
         // S + A (B was rolled in by the old "off" semantic but is now
@@ -213,8 +238,9 @@ public class Configuration : IPluginConfiguration
         }
 
         // A migration write is needed if we recovered a legacy password that
-        // isn't yet sealed, OR any filter migration occurred.
-        return migrated || (hadLegacy && !string.IsNullOrEmpty(Password));
+        // isn't yet sealed, a plaintext session id was scrubbed, OR any
+        // filter migration occurred.
+        return migrated || migratedSession || (hadLegacy && !string.IsNullOrEmpty(Password));
     }
 
     // M-2 fix (v0.4.7 audit): Save() runs from at least three contexts that
@@ -234,6 +260,12 @@ public class Configuration : IPluginConfiguration
             catch (Exception ex)
             {
                 Plugin.Log.Warning($"[Faloop] Password encryption failed: {ex.Message}");
+            }
+            // H-3: the session id is an auth token — sealed the same way.
+            try { ProtectedSessionId = Dpapi.Protect(StoredSessionId ?? string.Empty); }
+            catch (Exception ex)
+            {
+                Plugin.Log.Warning($"[Faloop] Session-id encryption failed: {ex.Message}");
             }
             Plugin.PluginInterface.SavePluginConfig(this);
         }
