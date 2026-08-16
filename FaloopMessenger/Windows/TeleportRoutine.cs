@@ -230,15 +230,21 @@ internal static class TeleportRoutine
                 return;
             }
 
-            Plugin.Log.Information($"[Faloop] /li {spawn.World} → /li {aetheryteName}");
+            Plugin.Log.Information($"[Faloop] Teleport plan: /li {spawn.World} → /li {aetheryteName}");
 
+            // Step 1 — world visit.
             await Plugin.Framework.RunOnFrameworkThread(() =>
                 Plugin.CommandManager.ProcessCommand($"/li {spawn.World.ToLowerInvariant()}"));
+            Plugin.Log.Debug($"[Faloop] Issued world command: /li {spawn.World.ToLowerInvariant()}");
 
+            // Step 2 — block until Lifestream has actually finished the hop.
             await WaitForLifestreamIdle();
 
+            // Step 3 — aetheryte. Logged separately so /xllog shows whether
+            // this half ever fired when a user reports "it only changed world".
             await Plugin.Framework.RunOnFrameworkThread(() =>
                 Plugin.CommandManager.ProcessCommand($"/li {aetheryteName.ToLowerInvariant()}"));
+            Plugin.Log.Information($"[Faloop] Issued aetheryte command: /li {aetheryteName.ToLowerInvariant()}");
         }
         catch (Exception ex)
         {
@@ -251,8 +257,34 @@ internal static class TeleportRoutine
         }
     }
 
-    // Wait until Lifestream's IsBusy IPC reports false. Falls back to a
-    // TerritoryChanged + stability window if Lifestream isn't installed.
+    // How long to give Lifestream to PICK UP the world command before we
+    // conclude it isn't going to (see the two-phase wait below).
+    private const int LifestreamStartupGraceSec = 15;
+    // Hard ceiling on a world visit once Lifestream has actually started it.
+    private const int LifestreamBusyTimeoutSec  = 120;
+    // Breathing room after IsBusy goes false. A world transfer reports done
+    // the instant the zone-in completes, but the client will drop a second
+    // /li issued in that same moment.
+    private const int LifestreamSettleMs        = 1200;
+
+    // Wait for Lifestream to finish the world visit before we issue the
+    // aetheryte command.
+    //
+    // TWO-PHASE, and the phases matter. The old single-phase version just
+    // polled "is IsBusy false?" after a 750 ms head start — but IsBusy is
+    // ALSO false during the window between us issuing /li <world> and
+    // Lifestream actually picking it up (it has to plan a route, possibly
+    // walk to an aethernet shard, open the world-visit menu). So "hasn't
+    // started yet" was indistinguishable from "already finished": we'd
+    // return after ~1 s and fire /li <aetheryte> into a Lifestream that was
+    // mid-transfer, which silently drops it. Symptom: the world hop works,
+    // the aetheryte teleport never happens. It was always a race; anything
+    // that lengthened Lifestream's startup (a Lifestream/Dalamud update, a
+    // longer walk to a shard) flipped it from usually-winning to usually-
+    // losing.
+    //
+    // Phase 1 waits for IsBusy to go TRUE  — proof Lifestream took the job.
+    // Phase 2 waits for IsBusy to go FALSE — proof the job is done.
     private static async Task WaitForLifestreamIdle()
     {
         Dalamud.Plugin.Ipc.ICallGateSubscriber<bool>? isBusy = null;
@@ -261,22 +293,49 @@ internal static class TeleportRoutine
 
         if (isBusy != null)
         {
-            await Task.Delay(750);
-            var deadline = DateTime.Now.AddSeconds(120);
-            while (DateTime.Now < deadline)
+            // IPC errors read as "not busy" — same as the old behaviour, and
+            // the bounded phases below keep a broken IPC from hanging us.
+            async Task<bool> PollBusyAsync()
             {
-                bool busy;
-                try { busy = await Plugin.Framework.RunOnFrameworkThread(() => isBusy.InvokeFunc()); }
-                catch { busy = false; }
+                try { return await Plugin.Framework.RunOnFrameworkThread(() => isBusy.InvokeFunc()); }
+                catch { return false; }
+            }
 
-                if (!busy)
+            // ── Phase 1: wait for Lifestream to pick the command up ──
+            var sawBusy       = false;
+            var startDeadline = DateTime.Now.AddSeconds(LifestreamStartupGraceSec);
+            while (DateTime.Now < startDeadline)
+            {
+                if (await PollBusyAsync()) { sawBusy = true; break; }
+                await Task.Delay(250);
+            }
+
+            if (!sawBusy)
+            {
+                // Either the hop completed inside a poll gap (we were already
+                // on the target world) or Lifestream ignored the command.
+                // Settle briefly and let the caller try the aetheryte anyway —
+                // a wrong-but-attempted teleport beats a silent no-op.
+                Plugin.Log.Warning(
+                    $"[Faloop] Lifestream never reported busy within {LifestreamStartupGraceSec}s " +
+                    "of the world command — proceeding to the aetheryte step anyway.");
+                await Task.Delay(LifestreamSettleMs);
+                return;
+            }
+
+            // ── Phase 2: wait for it to finish ──
+            var doneDeadline = DateTime.Now.AddSeconds(LifestreamBusyTimeoutSec);
+            while (DateTime.Now < doneDeadline)
+            {
+                if (!await PollBusyAsync())
                 {
-                    await Task.Delay(250);
+                    await Task.Delay(LifestreamSettleMs);
                     return;
                 }
                 await Task.Delay(500);
             }
-            Plugin.Log.Warning("[Faloop] Lifestream still busy after 2 min; proceeding anyway.");
+            Plugin.Log.Warning(
+                $"[Faloop] Lifestream still busy after {LifestreamBusyTimeoutSec}s; proceeding anyway.");
             return;
         }
 
