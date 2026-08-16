@@ -26,6 +26,57 @@ internal static class TeleportRoutine
     /// threads. Used by the renderer's dismiss-spawn path.</summary>
     internal static void ClearInProgress(long spawnKey) => _inProgress.TryRemove(spawnKey, out _);
 
+    // ── Lifestream IPC (v0.4.16) ──────────────────────────────────────
+    //
+    // Lifestream 2.5.x exposes a typed ECommons EzIPC surface with real
+    // return values. We previously drove it by firing blind chat commands
+    // (CommandManager.ProcessCommand("/li …")), which return NOTHING — so
+    // when a teleport half-worked the plugin had no idea which step failed
+    // and every diagnosis was guesswork. These subscribers give us a
+    // success/failure signal per step.
+    //
+    //   bool IsBusy()                     TaskManager + FollowPath status
+    //   bool ChangeWorld(string world)    same-DC or cross-DC world visit
+    //   bool CanVisitSameDC(string world) pre-flight validation
+    //   bool CanVisitCrossDC(string world)
+    //   void ExecuteCommand(string args)  runs a "/li …" through Lifestream
+    //
+    // Subscribers are created lazily and cached; creation never throws
+    // (Dalamud builds the gate on demand) — only invocation does, when the
+    // provider side isn't registered.
+    private static Dalamud.Plugin.Ipc.ICallGateSubscriber<bool>?           _lsIsBusy;
+    private static Dalamud.Plugin.Ipc.ICallGateSubscriber<string, bool>?   _lsChangeWorld;
+    private static Dalamud.Plugin.Ipc.ICallGateSubscriber<string, bool>?   _lsCanVisitSameDc;
+    private static Dalamud.Plugin.Ipc.ICallGateSubscriber<string, bool>?   _lsCanVisitCrossDc;
+    private static Dalamud.Plugin.Ipc.ICallGateSubscriber<string, object>? _lsExecuteCommand;
+
+    private static void EnsureLifestreamGates()
+    {
+        _lsIsBusy          ??= Plugin.PluginInterface.GetIpcSubscriber<bool>("Lifestream.IsBusy");
+        _lsChangeWorld     ??= Plugin.PluginInterface.GetIpcSubscriber<string, bool>("Lifestream.ChangeWorld");
+        _lsCanVisitSameDc  ??= Plugin.PluginInterface.GetIpcSubscriber<string, bool>("Lifestream.CanVisitSameDC");
+        _lsCanVisitCrossDc ??= Plugin.PluginInterface.GetIpcSubscriber<string, bool>("Lifestream.CanVisitCrossDC");
+        _lsExecuteCommand  ??= Plugin.PluginInterface.GetIpcSubscriber<string, object>("Lifestream.ExecuteCommand");
+    }
+
+    // Invoke a bool-returning Lifestream IPC on the framework thread.
+    // Returns `fallback` (and logs) if the provider isn't registered.
+    private static async Task<bool> LsBoolAsync(
+        Dalamud.Plugin.Ipc.ICallGateSubscriber<string, bool>? gate,
+        string arg, string label, bool fallback)
+    {
+        if (gate == null) return fallback;
+        try
+        {
+            return await Plugin.Framework.RunOnFrameworkThread(() => gate.InvokeFunc(arg));
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.Warning($"[Faloop] Lifestream.{label}(\"{arg}\") unavailable: {ex.Message}");
+            return fallback;
+        }
+    }
+
     // M-3 fix (v0.4.7 audit): probe Lifestream's IPC at startup so the TP
     // button can disable itself with an actionable tooltip when the user
     // doesn't have Lifestream installed.
@@ -52,8 +103,8 @@ internal static class TeleportRoutine
 
             try
             {
-                var sub = Plugin.PluginInterface.GetIpcSubscriber<bool>("Lifestream.IsBusy");
-                sub.InvokeFunc();   // throws if the IPC isn't registered
+                EnsureLifestreamGates();
+                _lsIsBusy!.InvokeFunc();   // throws if the provider isn't registered
                 _lifestreamKnownGood = true;
                 return true;
             }
@@ -230,21 +281,81 @@ internal static class TeleportRoutine
                 return;
             }
 
-            Plugin.Log.Information($"[Faloop] Teleport plan: /li {spawn.World} → /li {aetheryteName}");
+            EnsureLifestreamGates();
 
-            // Step 1 — world visit.
-            await Plugin.Framework.RunOnFrameworkThread(() =>
-                Plugin.CommandManager.ProcessCommand($"/li {spawn.World.ToLowerInvariant()}"));
-            Plugin.Log.Debug($"[Faloop] Issued world command: /li {spawn.World.ToLowerInvariant()}");
+            // Are we already on the target world? If so the whole world-visit
+            // step (and its timing race) is skipped — a large fraction of
+            // hunts are on your home world.
+            var currentWorld = await Plugin.Framework.RunOnFrameworkThread(() =>
+                Plugin.ObjectTable.LocalPlayer?.CurrentWorld.ValueNullable?.Name.ToString() ?? string.Empty);
+            var needWorldHop = !string.Equals(currentWorld, spawn.World, StringComparison.OrdinalIgnoreCase);
 
-            // Step 2 — block until Lifestream has actually finished the hop.
-            await WaitForLifestreamIdle();
+            Plugin.Log.Information(
+                $"[Faloop] Teleport plan: world={spawn.World} (currently '{currentWorld}', " +
+                $"hop={(needWorldHop ? "yes" : "skip")}) → aetheryte={aetheryteName}");
 
-            // Step 3 — aetheryte. Logged separately so /xllog shows whether
-            // this half ever fired when a user reports "it only changed world".
-            await Plugin.Framework.RunOnFrameworkThread(() =>
-                Plugin.CommandManager.ProcessCommand($"/li {aetheryteName.ToLowerInvariant()}"));
-            Plugin.Log.Information($"[Faloop] Issued aetheryte command: /li {aetheryteName.ToLowerInvariant()}");
+            if (needWorldHop)
+            {
+                // Pre-flight: Lifestream tells us up front whether this world
+                // is reachable at all, so an impossible hop reports a clear
+                // reason instead of failing silently mid-flow. Both checks
+                // default to `true` when the IPC is missing so an older
+                // Lifestream can't block us.
+                var sameDc  = await LsBoolAsync(_lsCanVisitSameDc,  spawn.World, "CanVisitSameDC",  true);
+                var crossDc = await LsBoolAsync(_lsCanVisitCrossDc, spawn.World, "CanVisitCrossDC", true);
+                if (!sameDc && !crossDc)
+                {
+                    SafePrint($"[FaloopMessenger] Lifestream says {spawn.World} isn't visitable right now " +
+                              "(travel restriction, congestion, or you're mid-duty).");
+                    return;
+                }
+
+                // Typed IPC instead of a blind "/li <world>" chat command —
+                // this one actually reports whether it took the job.
+                var accepted = await LsBoolAsync(_lsChangeWorld, spawn.World, "ChangeWorld", fallback: false);
+                if (!accepted)
+                {
+                    // Fall back to the legacy chat command for older
+                    // Lifestream builds that lack ChangeWorld.
+                    Plugin.Log.Warning("[Faloop] Lifestream.ChangeWorld declined/unavailable — " +
+                                       "falling back to the /li chat command.");
+                    await Plugin.Framework.RunOnFrameworkThread(() =>
+                        Plugin.CommandManager.ProcessCommand($"/li {spawn.World.ToLowerInvariant()}"));
+                }
+                else
+                {
+                    Plugin.Log.Debug($"[Faloop] Lifestream.ChangeWorld(\"{spawn.World}\") accepted.");
+                }
+
+                // Block until Lifestream has actually finished the hop.
+                await WaitForLifestreamIdle();
+            }
+
+            // Aetheryte step. Routed through Lifestream.ExecuteCommand rather
+            // than the global chat handler so it can't be intercepted or
+            // reordered by another plugin's /li handler.
+            var aetheryteCmd = $"/li {aetheryteName.ToLowerInvariant()}";
+            var viaIpc = false;
+            if (_lsExecuteCommand != null)
+            {
+                try
+                {
+                    await Plugin.Framework.RunOnFrameworkThread(() =>
+                        _lsExecuteCommand.InvokeAction(aetheryteName.ToLowerInvariant()));
+                    viaIpc = true;
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.Warning($"[Faloop] Lifestream.ExecuteCommand unavailable: {ex.Message}");
+                }
+            }
+            if (!viaIpc)
+            {
+                await Plugin.Framework.RunOnFrameworkThread(() =>
+                    Plugin.CommandManager.ProcessCommand(aetheryteCmd));
+            }
+            Plugin.Log.Information(
+                $"[Faloop] Aetheryte step issued ({(viaIpc ? "IPC" : "chat command")}): {aetheryteCmd}");
         }
         catch (Exception ex)
         {
@@ -287,9 +398,8 @@ internal static class TeleportRoutine
     // Phase 2 waits for IsBusy to go FALSE — proof the job is done.
     private static async Task WaitForLifestreamIdle()
     {
-        Dalamud.Plugin.Ipc.ICallGateSubscriber<bool>? isBusy = null;
-        try { isBusy = Plugin.PluginInterface.GetIpcSubscriber<bool>("Lifestream.IsBusy"); }
-        catch { isBusy = null; }
+        EnsureLifestreamGates();
+        var isBusy = _lsIsBusy;
 
         if (isBusy != null)
         {

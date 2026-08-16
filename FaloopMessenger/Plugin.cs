@@ -25,6 +25,9 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static ITextureProvider       TextureProvider { get; private set; } = null!;
     [PluginService] internal static IFramework             Framework       { get; private set; } = null!;
     [PluginService] internal static ICondition             Condition       { get; private set; } = null!;
+    // API 15 moved LocalPlayer off IClientState onto IObjectTable. Used by
+    // the teleport flow to skip the world hop when we're already there.
+    [PluginService] internal static IObjectTable           ObjectTable     { get; private set; } = null!;
 
     private const string CommandName        = "/faloop";
     private const string MiniCommandName    = "/faloopmini";
